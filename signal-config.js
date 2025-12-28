@@ -7,10 +7,13 @@ export default {
     // Chart specific configuration used by the frontend dev server/proxy
     chart: {
         // host/ip address for the chart backend (used by vite proxy targets)
-        serverHost: '127.0.0.1',
+        serverHost: 'upright-dog-rapidly.ngrok-free.app',
         // backend API port the chart frontend should proxy API requests to
         serverPort: 5000,
         // optional websocket port the chart frontend should proxy to
         webSocketPort: 8765,
+        // API key used by the chart/backend API requests. Read from environment variables:
+        // `OPENALGO_API_KEY` or `API_KEY`. Replace the placeholder only for local testing.
+        apiKey: process.env.OPENALGO_API_KEY || process.env.API_KEY || 'e486c10c6d3bbf0bd8fd2f8663ea406b0ed53d46090202b5910395aa44f45958',
     }
 };

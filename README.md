@@ -163,6 +163,7 @@ npm run preview
 - Configure broker, topics, and ports in `signal-config.js`:
   - **MQTT Broker**: Support for TCP (`tcp://localhost:1883`) and WebSocket (`ws://localhost:9001`) protocols.
   - **Chart Proxy**: Configure backend API (`serverHost`, `serverPort`) and WebSocket (`webSocketPort`) proxy settings.
+  - **API Key**: Configure the API key used by chart/backend requests via environment variables. Set `OPENALGO_API_KEY` (preferred) or `API_KEY`. The key is read into `chart.apiKey` in `signal-config.js`; avoid committing secrets to source control.
 - **Auto-Startup**: Receiver starts automatically with `npm run dev`
 
 ## Screenshot
