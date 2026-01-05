@@ -4,6 +4,7 @@ import signalConfig from './signal-config.js'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: './', // Use relative paths for static deployment (GitHub Pages)
   plugins: [react()],
   server: {
     port: 5001,
