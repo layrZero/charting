@@ -19,6 +19,6 @@ export default {
         webSocketPort: process.env.OPENALGO_WS_PORT || '',
         // API key used by the chart/backend API requests. Always prefer environment
         // variables (`OPENALGO_API_KEY` or `API_KEY`). Do NOT commit real keys.
-        apiKey: process.env.OPENALGO_API_KEY || process.env.API_KEY || 'REPLACE_WITH_API_KEY',
+        apiKey: process.env.OPENALGO_API_KEY || process.env.API_KEY || '8d4da51d2fd0f6bdeeba93868837e6f1859afbf0b90fedfa50a3d6cd745c21c6',
     }
 };

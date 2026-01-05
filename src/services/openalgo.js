@@ -54,17 +54,29 @@ export const forceCloseAllWebSockets = () => {
 };
 
 /**
- * Get Host URL from localStorage settings or use default
+ * Get Host URL from environment variables or localStorage settings or use default
+ * Priority: ENV VAR > localStorage > DEFAULT
  */
 export const getHostUrl = () => {
+    // In production build, use environment variable
+    if (import.meta.env.VITE_OA_HOST_URL) {
+        return import.meta.env.VITE_OA_HOST_URL;
+    }
+    // Fallback to localStorage (for runtime configuration)
     return localStorage.getItem('oa_host_url') || DEFAULT_HOST;
 };
 
 /**
  * Check if we should use the Vite proxy (when using default localhost settings)
- * This avoids CORS issues during development
+ * Proxy only available in development mode (npm run dev)
+ * Production builds (npm run build) always use direct API calls
  */
 const shouldUseProxy = () => {
+    // Never use proxy in production builds
+    if (import.meta.env.PROD) {
+        return false;
+    }
+
     const hostUrl = getHostUrl();
     // Use proxy when host is default localhost and we're running on localhost
     const isDefaultHost = hostUrl === DEFAULT_HOST || hostUrl === 'http://localhost:5000' || hostUrl === 'http://127.0.0.1:5000';
@@ -93,11 +105,18 @@ export const getLoginUrl = () => {
 };
 
 /**
- * Get WebSocket URL from localStorage settings or use default
+ * Get WebSocket URL from environment variables or localStorage or use default
+ * Automatically uses wss:// for HTTPS hosts, ws:// for HTTP hosts
  */
 const getWebSocketUrl = () => {
-    const wsHost = localStorage.getItem('oa_ws_url') || DEFAULT_WS_HOST;
-    return `ws://${wsHost}`;
+    // Get WS host from env or localStorage
+    const wsHost = import.meta.env.VITE_OA_WS_URL || localStorage.getItem('oa_ws_url') || DEFAULT_WS_HOST;
+
+    // Auto-detect protocol based on main host URL
+    const hostUrl = getHostUrl();
+    const protocol = hostUrl.startsWith('https://') ? 'wss://' : 'ws://';
+
+    return `${protocol}${wsHost}`;
 };
 
 /**

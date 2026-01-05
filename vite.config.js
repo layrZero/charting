@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     port: 5001,
     proxy: (() => {
-      const serverProtocol = process.env.OPENALGO_SERVER_PROTOCOL || 'http';
+      const serverProtocol = process.env.OPENALGO_SERVER_PROTOCOL || 'https'; // Use HTTPS for ngrok by default
       const serverHost = process.env.OPENALGO_SERVER_HOST || signalConfig.chart?.serverHost || '127.0.0.1';
       const serverPort = process.env.OPENALGO_SERVER_PORT || signalConfig.chart?.serverPort;
 
