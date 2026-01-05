@@ -11,7 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
-package-lock.json
+
 
 # Local environment file (do NOT commit)
 /.env
