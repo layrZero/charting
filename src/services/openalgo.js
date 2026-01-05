@@ -116,7 +116,15 @@ const getWebSocketUrl = () => {
     const hostUrl = getHostUrl();
     const protocol = hostUrl.startsWith('https://') ? 'wss://' : 'ws://';
 
-    return `${protocol}${wsHost}`;
+    let url = `${protocol}${wsHost}`;
+
+    // Ensure the URL ends with /ws to match Nginx routing
+    // This allows it to work both locally (server ignores path) and behind Nginx (routes /ws to 8765)
+    if (!url.endsWith('/ws') && !url.endsWith('/ws/')) {
+        url = `${url}/ws`;
+    }
+
+    return url;
 };
 
 /**
