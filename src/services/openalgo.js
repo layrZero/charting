@@ -425,7 +425,6 @@ export const getKlines = async (symbol, exchange = 'NSE', interval = '1d', limit
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             signal,
             body: JSON.stringify({
                 apikey: getApiKey(),
@@ -504,7 +503,6 @@ export const getTickerPrice = async (symbol, exchange = 'NSE', signal) => {
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             signal,
             body: JSON.stringify({
                 apikey: getApiKey(),
@@ -710,7 +708,6 @@ export const searchSymbols = async (query, exchange, instrumenttype) => {
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             body: JSON.stringify(requestBody)
         });
 
@@ -741,7 +738,6 @@ export const getIntervals = async () => {
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             body: JSON.stringify({
                 apikey: getApiKey()
             })
@@ -783,7 +779,6 @@ export const getHistoricalKlines = async (symbol, exchange = 'NSE', interval = '
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             signal,
             body: JSON.stringify({
                 apikey: getApiKey(),
@@ -918,7 +913,6 @@ export const saveUserPreferences = async (preferences) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            credentials: 'include',
             body: JSON.stringify({ apikey: apiKey, ...preferences })
         });
 
@@ -965,7 +959,6 @@ export const getOptionChain = async (underlying, exchange = 'NFO', expiryDate = 
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             body: JSON.stringify(requestBody)
         });
 
@@ -1021,7 +1014,6 @@ export const getOptionGreeks = async (symbol, exchange = 'NFO', options = {}) =>
             headers: {
                 'Content-Type': 'application/json',
             },
-            credentials: 'include',
             body: JSON.stringify(requestBody)
         });
 

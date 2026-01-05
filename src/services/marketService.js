@@ -88,7 +88,6 @@ export const getMarketHolidays = async (year = new Date().getFullYear()) => {
         const response = await fetch(`${getApiBase()}/market/holidays`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
                 apikey: getApiKey(),
                 year
@@ -149,7 +148,6 @@ export const getMarketTimings = async (date) => {
         const response = await fetch(`${getApiBase()}/market/timings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
                 apikey: getApiKey(),
                 date

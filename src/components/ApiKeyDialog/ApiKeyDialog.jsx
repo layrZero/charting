@@ -30,8 +30,7 @@ const ApiKeyDialog = ({ onSave, onClose }) => {
             // Uses GET with apikey as query parameter
             // FIX: Use the configured hostUrl instead of relative path
             const response = await fetch(`${hostUrl}/api/v1/chart?apikey=${encodeURIComponent(apiKey.trim())}`, {
-                method: 'GET',
-                credentials: 'include'
+                method: 'GET'
             });
 
             if (response.ok) {
