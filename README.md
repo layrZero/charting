@@ -1,175 +1,47 @@
-# openalgo-chart
+# Layr0 Charts
 
-> **WARNING — Localhost Only:** This project is intended to run on a local development server (http://localhost). Some features (API access, CORS, or websocket connections) may not work correctly when served from a remote host or different origin.
+Layr0 Charts is an independent, responsive trading terminal. It uses OpenAlgo
+Charts 2.2 for rendering and India Market Connector (IMC) as its market-data
+and trading backend. It does not embed or import the IMC frontend.
 
-A professional charting application using `lightweight-charts` and React.
+## Capabilities
 
-*Inspired by [TradingView](https://www.tradingview.com/) — UI and charting concepts influenced this project.*
+- OpenAlgo 2.2 interactive charts, indicators, drawings and touch controls.
+- IMC history, symbol search, live market data and depth subscriptions.
+- Expiry-driven option chain and selected CE/PE charting.
+- Analyzer/live-mode-aware order entry plus portfolio snapshots.
+- Complete Chart, Options, Trade and Portfolio workflows on desktop, tablet,
+  and phone.
 
-## Features
+## Setup
 
-### Multi-Chart Layout
-- Support for 1, 2, 3, or 4 chart grid layouts
-- Each chart maintains independent symbol, interval, and strategy configuration
-- Click on any chart to make it active for symbol changes
+Node.js 20+ and an accessible IMC instance are required.
 
-### Option Chain Picker
-- Professional option chain interface with real-time data
-- Strategy templates: Straddle, Strangle, Iron Condor, Butterfly, Bull Call Spread, Bear Put Spread
-- Custom multi-leg strategy builder
-- Greeks display (Delta, IV)
-- OI bars visualization
-- Per-chart strategy configuration - run different strategies in each chart panel
-
-### Chart Types
-- Candlestick
-- Line
-- Area
-- Baseline
-- Renko
-
-### Technical Indicators
-- SMA (Simple Moving Average)
-- EMA (Exponential Moving Average)
-- RSI (Relative Strength Index)
-- MACD
-- Bollinger Bands
-- Volume
-- ATR (Average True Range)
-- Stochastic
-- VWAP
-- Supertrend (ATR-based trend indicator)
-
-### Drawing Tools
-- Trend lines
-- Horizontal lines
-- Vertical lines
-- Ray lines
-- Fibonacci retracement
-- Shapes (Rectangle, Circle, Triangle, Arc)
-- Text annotations
-- Price alerts
-- Brush and Highlighter
-- Parallel Channel
-
-### Watchlist
-- Multiple watchlists support
-- Favorites list
-- Real-time price updates
-- Drag-and-drop reordering
-- Import/Export functionality
-
-### Additional Features
-- Symbol comparison overlay
-- Replay mode for historical analysis
-- Price alerts with notifications
-- Session break markers
-- Customizable chart appearance
-- Keyboard shortcuts
-- Command palette
-- Shift+Click Quick Measure Tool (measure distance between any two points)
-- Indicator Settings (configure periods, multipliers, colors for all indicators)
-- Quick Option Picker (fast option chain selection from toolbar)
-
-## Quick Start
-
-Clone the repo:
-
-```bash
-git clone https://github.com/crypt0inf0/openalgo-chart.git
-```
-
-Change into the project directory:
-
-```bash
-cd openalgo-chart
-```
-
-Install dependencies:
-
-```bash
+```sh
+cp .env.example .env.local
 npm install
-```
-
-Build for production:
-
-```bash
-npm run build
-```
-
-Run the dev server:
-
-```bash
 npm run dev
 ```
 
-You can also preview a production build locally with:
+Use the settings icon to provide the IMC REST URL, WebSocket URL, and API key.
+The key remains in browser storage and is sent only to the configured IMC
+server. Configure IMC CORS for the terminal's origin when necessary.
 
-```bash
-npm run preview
-```
+Run `npm run build` to create `dist/`. Serve it over HTTPS and set the two
+`VITE_IMC_*` variables at build time, or use the connection dialog.
 
-## Recent Updates
+## State policy
 
-### Supertrend Indicator
-- New Supertrend indicator using ATR-based trend detection
-- Green line when bullish (price above support), red when bearish (price below resistance)
-- Configurable period and multiplier settings
+This is a clean-start migration. New state uses
+`layr0_openalgo_workspace_v1`; legacy `tv_*` chart data is neither read,
+converted, nor deleted.
 
-### Indicator Settings Modal
-- New dedicated modal for configuring all indicator parameters
-- Adjust periods, multipliers, and colors for each indicator
-- Sidebar navigation by category (Moving Averages, Oscillators, Momentum, Volatility, Trend, Volume)
-- Real-time preview of settings changes on chart
+## Documentation
 
-### Quick Option Picker
-- Fast option chain access from toolbar (chain link icon)
-- Shows Call/Put LTP, OI, OI bars, and strike prices
-- Click any option to instantly chart it
-- Displays spot price, PCR ratio, and ATM premium
+- [Architecture](docs/ARCHITECTURE.md)
+- [IMC integration contract](docs/IMC_INTEGRATION.md)
+- [Options and trading workflow](docs/OPTIONS_AND_TRADING.md)
+- [OpenAlgo extension guide](docs/OPENALGO_EXTENSION.md)
 
-### Arc Drawing Tool
-- New Arc tool for highlighting chart patterns (cup and handle, rounded bottoms, etc.)
-- 3-point input: click start, apex/control point, then end
-- Quadratic bezier curve with customizable border and fill
-- Full editing support: select, move anchor points, delete
-
-### Shift+Click Quick Measure
-- Hold Shift and click two points on the chart to quickly measure distance
-- Shows price change (absolute and percentage), bar count, and time duration
-- Visual line connecting the two measurement points
-
-### Option Chain & Strategy Charts
-- Added professional Option Chain Picker with Greeks (Delta, IV)
-- Strategy templates for common option strategies
-- Custom multi-leg strategy builder with buy/sell direction toggle
-- Per-chart strategy configuration for multi-chart layouts
-- Dynamic OHLC header showing strategy name (e.g., "NIFTY +25350PE/+25150PE (16 DEC)")
-
-### Multi-Chart Improvements
-- Each chart panel now maintains its own independent strategy configuration
-- Selecting a regular stock clears strategy config for that chart only
-- Strategy names display correctly in both OHLC header and price label
-
-### UI Enhancements
-- Larger Option Chain Picker modal (950px width, 550px content height)
-- More strikes visible at once for easier strategy building
-
-### MQTT Signal Receiver
-- Visualize Buy/Sell signals from MQTT topics directly on the chart
-- **BUY**: Green arrow below candle
-- **SELL**: Red arrow above candle
-- Filter signals by symbol automatically
-- Configure broker, topics, and ports in `signal-config.js`:
-  - **MQTT Broker**: Support for TCP (`tcp://localhost:1883`) and WebSocket (`ws://localhost:9001`) protocols.
-  - **Chart Proxy**: Configure backend API (`serverHost`, `serverPort`) and WebSocket (`webSocketPort`) proxy settings.
-  - **API Key**: Configure the API key used by chart/backend requests via environment variables. Set `OPENALGO_API_KEY` (preferred) or `API_KEY`. The key is read into `chart.apiKey` in `signal-config.js`; avoid committing secrets to source control.
-- **Auto-Startup**: Receiver starts automatically with `npm run dev`
-
-## Screenshot
-
-![App screenshot](./chart.png)
-
-## License
-
-MIT
+Never commit credentials. Verify live order behavior in non-production IMC
+before a production rollout.

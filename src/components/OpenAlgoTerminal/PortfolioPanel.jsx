@@ -1,0 +1,9 @@
+import { useCallback, useEffect, useState } from 'react';
+const money = (value) => Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+export default function PortfolioPanel({ client }) {
+  const [data, setData] = useState({}); const [error, setError] = useState('');
+  const refresh = useCallback(async () => { try { setError(''); const [funds, positions, orders, holdings, pnl] = await Promise.all([client.funds(), client.positionBook(), client.orderBook(), client.holdings(), client.pnl()]); setData({ funds, positions, orders, holdings, pnl }); } catch (caught) { setError(caught.message); } }, [client]);
+  useEffect(() => { const initial = setTimeout(refresh, 0); const id = setInterval(refresh, 30000); return () => { clearTimeout(initial); clearInterval(id); }; }, [refresh]);
+  const list = (item) => item?.data || item?.positions || item?.orders || item?.holdings || [];
+  return <section className="side-card portfolio-card"><header><b>Portfolio</b><button onClick={refresh}>↻</button></header>{error && <p className="error">{error}</p>}<dl><div><dt>Available</dt><dd>₹ {money(data.funds?.availablecash ?? data.funds?.available_cash)}</dd></div><div><dt>P&amp;L</dt><dd>₹ {money(data.pnl?.total_pnl ?? data.pnl?.pnl)}</dd></div></dl><h3>Positions ({list(data.positions).length})</h3><ul>{list(data.positions).slice(0, 5).map((position, index) => <li key={position.symbol || index}><span>{position.symbol || position.tradingsymbol}</span><small>{position.quantity ?? position.netqty ?? 0} · ₹ {money(position.pnl)}</small></li>)}</ul><h3>Open orders ({list(data.orders).length})</h3><ul>{list(data.orders).slice(0, 5).map((order, index) => <li key={order.orderid || index}><span>{order.symbol || order.tradingsymbol}</span><small>{order.status}</small></li>)}</ul></section>;
+}

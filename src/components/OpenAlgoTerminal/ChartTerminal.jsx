@@ -1,0 +1,13 @@
+import { useEffect, useRef, useState } from 'react';
+import { createWidget } from 'openalgo-charts/widget';
+import { ImcMarketDataFeed } from '../../services/imcFeeds';
+const intervals = ['1m', '5m', '15m', '1h', '1d', '1w'];
+export default function ChartTerminal({ client, active, onActiveChange, theme }) {
+  const host = useRef(null); const widget = useRef(null); const [error, setError] = useState('');
+  // The widget is deliberately mounted once; later active-symbol changes use its public API below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { try { const feed = new ImcMarketDataFeed(client); widget.current = createWidget(host.current, { feed, symbol: active.symbol, exchange: active.exchange, interval: active.interval, intervals, theme, persist: false, mobile: true, symbolSearch: async (query) => { const result = await client.search(query); return (result.data || result.symbols || []).map((item) => ({ symbol: item.symbol, exchange: item.exchange })); }, onOrder: () => document.querySelector('.trading-panel')?.scrollIntoView({ behavior: 'smooth' }) }); const offSymbol = widget.current.on('symbol', ({ symbol, exchange }) => onActiveChange({ symbol, exchange })); const offInterval = widget.current.on('interval', ({ interval }) => onActiveChange({ interval })); return () => { offSymbol(); offInterval(); widget.current?.destroy(); widget.current = null; }; } catch (caught) { setTimeout(() => setError(caught.message || 'Unable to start the chart.'), 0); } }, []);
+  useEffect(() => { if (widget.current && (widget.current.symbol() !== active.symbol || widget.current.exchange() !== active.exchange)) widget.current.setSymbol(active.symbol, active.exchange); }, [active.symbol, active.exchange]);
+  useEffect(() => { if (widget.current && widget.current.interval() !== active.interval) widget.current.setInterval(active.interval); }, [active.interval]);
+  return <div className="chart-terminal"><div className="chart-context"><b>{active.symbol}</b><span>{active.exchange}</span><select value={active.interval} onChange={(e) => onActiveChange({ interval: e.target.value })}>{intervals.map((item) => <option key={item}>{item}</option>)}</select></div>{error && <p className="error">{error}</p>}<div ref={host} className="openalgo-host" /></div>;
+}

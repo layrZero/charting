@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "concurrently \"npm run signal-receiver\" \"vite\"",
     "build": "vite build",
-    "lint": "eslint .",
+    "lint": "eslint src/App.jsx src/components/OpenAlgoTerminal src/services/imcClient.js src/services/imcFeeds.js src/services/workspace.js test",
     "preview": "vite preview",
+    "test": "node --test test/**/*.test.mjs",
     "signal-receiver": "node scripts/signal-receiver.js"
   },
   "dependencies": {
@@ -16,9 +17,9 @@
     "cors": "^2.8.5",
     "express": "^5.2.1",
     "html2canvas": "^1.4.1",
-    "lightweight-charts": "^5.0.9",
     "lucide-react": "^0.555.0",
     "mqtt": "^5.14.1",
+    "openalgo-charts": "^2.2.0",
     "prop-types": "^15.8.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
