@@ -1,5 +1,5 @@
 {
-  "name": "openalgo-chart",
+  "name": "layr0-charts",
   "private": true,
   "homepage": ".",
   "version": "0.0.0",
@@ -19,7 +19,6 @@
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.555.0",
     "mqtt": "^5.14.1",
-    "openalgo-charts": "^2.2.0",
     "prop-types": "^15.8.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

@@ -1,11 +1,26 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import signalConfig from './signal-config.js'
+import { fileURLToPath, URL } from 'node:url'
+
+const engine = (entry) => fileURLToPath(new URL(`./src/chart-engine/${entry}`, import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
   base: './', // Use relative paths for static deployment (GitHub Pages)
   plugins: [react()],
+  resolve: {
+    alias: [
+      { find: '@layr0/chart-engine/widget', replacement: engine('widget/index.ts') },
+      { find: '@layr0/chart-engine/indicators', replacement: engine('indicators/index.ts') },
+      { find: '@layr0/chart-engine/draw', replacement: engine('draw/index.ts') },
+      { find: '@layr0/chart-engine/transform', replacement: engine('transform/index.ts') },
+      { find: '@layr0/chart-engine/profile', replacement: engine('profile/index.ts') },
+      { find: '@layr0/chart-engine/trade', replacement: engine('trade/index.ts') },
+      { find: '@layr0/chart-engine/webgl', replacement: engine('webgl/index.ts') },
+      { find: '@layr0/chart-engine', replacement: engine('index.ts') },
+    ],
+  },
   server: {
     port: 5001,
     proxy: (() => {

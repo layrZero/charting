@@ -1,12 +1,14 @@
 # Layr0 Charts
 
-Layr0 Charts is an independent, responsive trading terminal. It uses OpenAlgo
-Charts 2.2 for rendering and India Market Connector (IMC) as its market-data
-and trading backend. It does not embed or import the IMC frontend.
+Layr0 Charts is an independent, responsive trading terminal. Its Layer Zero
+chart engine is integrated into this private repository, while India Market
+Connector (IMC) supplies market-data and trading services. It does not embed
+or import the IMC frontend.
 
 ## Capabilities
 
-- OpenAlgo 2.2 interactive charts, indicators, drawings and touch controls.
+- Interactive charts, indicators, drawings and touch controls from the
+  internal Layer Zero chart engine.
 - IMC history, symbol search, live market data and depth subscriptions.
 - Expiry-driven option chain and selected CE/PE charting.
 - Analyzer/live-mode-aware order entry plus portfolio snapshots.
@@ -41,7 +43,11 @@ converted, nor deleted.
 - [Architecture](docs/ARCHITECTURE.md)
 - [IMC integration contract](docs/IMC_INTEGRATION.md)
 - [Options and trading workflow](docs/OPTIONS_AND_TRADING.md)
-- [OpenAlgo extension guide](docs/OPENALGO_EXTENSION.md)
+- [Chart engine extension guide](docs/CHART_ENGINE_EXTENSION.md)
+
+The chart engine is internal source under `src/chart-engine`. Product code
+imports only the Layer Zero aliases such as `@layr0/chart-engine/widget`.
+Required third-party attribution is retained in `THIRD_PARTY_NOTICES.md`.
 
 Never commit credentials. Verify live order behavior in non-production IMC
 before a production rollout.
