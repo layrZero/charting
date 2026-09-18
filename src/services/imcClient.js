@@ -88,8 +88,8 @@ export class ImcClient {
   intervals() { return this.request('intervals'); }
   marketTimings(date) { return this.request('market/timings', { date }); }
   marketHolidays(year) { return this.request('market/holidays', year ? { year } : {}); }
-  expiry(symbol, exchange, instrumenttype = 'options') { return this.request('expiry', { symbol, exchange, instrumenttype }); }
-  optionChain(underlying, exchange, expiry_date, strike_count = 15) { return this.request('optionchain', { underlying, exchange, expiry_date, strike_count }); }
+  expiry(symbol, exchange, instrumenttype = 'options', options) { return this.request('expiry', { symbol, exchange, instrumenttype }, options); }
+  optionChain(underlying, exchange, expiry_date, strike_count = 15, options) { return this.request('optionchain', { underlying, exchange, expiry_date, strike_count }, options); }
   optionSymbol(input) { return this.request('optionsymbol', input); }
   optionGreeks(input) { return this.request('optiongreeks', input); }
   syntheticFuture(input) { return this.request('syntheticfuture', input); }
