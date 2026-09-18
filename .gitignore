@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Local-only Kronos checkout and Python runtime artifacts.
+services/kronos/.deps/
+services/kronos/.venv/
+__pycache__/
+*.py[cod]
+
 
 # Local environment file (do NOT commit)
 /.env

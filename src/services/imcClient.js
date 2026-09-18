@@ -38,8 +38,8 @@ export class ImcClient {
   instruments(exchange) { return this.request('instruments', { exchange }); }
   ticker(symbol, exchange) { return this.request('ticker', { symbol, exchange }); }
   intervals() { return this.request('intervals'); }
-  marketTimings() { return this.request('market/timings', {}); }
-  marketHolidays() { return this.request('market/holidays', {}); }
+  marketTimings(date) { return this.request('market/timings', { date }); }
+  marketHolidays(year) { return this.request('market/holidays', year ? { year } : {}); }
   expiry(symbol, exchange, instrumenttype = 'options') { return this.request('expiry', { symbol, exchange, instrumenttype }); }
   optionChain(underlying, exchange, expiry_date, strike_count = 15) { return this.request('optionchain', { underlying, exchange, expiry_date, strike_count }); }
   optionSymbol(input) { return this.request('optionsymbol', input); }

@@ -1,4 +1,4 @@
-import { ImcClient, normalizeHistory, normalizeDepth } from './imcClient';
+import { ImcClient, normalizeHistory, normalizeDepth } from './imcClient.js';
 
 const date = (seconds) => new Date(seconds * 1000).toISOString().slice(0, 10);
 
@@ -9,11 +9,11 @@ export class ImcMarketDataFeed {
     const payload = await this.client.history({ symbol, exchange, interval, start_date: date(from || now - 86400 * 365), end_date: date(to || now) }, { signal });
     return normalizeHistory(payload);
   }
-  subscribeBars({ symbol, exchange }, onBar) {
-    return this.subscribe({ symbol, exchange, mode: 1 }, (data) => {
-      const price = Number(data.ltp ?? data.last_price ?? data.last);
-      if (Number.isFinite(price)) onBar({ time: Math.floor(Date.now() / 1000), open: price, high: price, low: price, close: price, volume: Number(data.volume || 0) });
-    });
+  subscribeBars() {
+    // IMC's browser stream is LTP/quote data, not a broker-authored OHLC bar.
+    // Do not manufacture candles from ticks: the forecast controller refreshes
+    // authoritative history at completed-candle boundaries instead.
+    return () => {};
   }
   subscribeDepth({ symbol, exchange }, onDepth, { depthLevel = 5 } = {}) { return this.subscribe({ symbol, exchange, mode: 3, depth: depthLevel }, (data) => onDepth(normalizeDepth(data))); }
   subscribe(subscription, onData) {

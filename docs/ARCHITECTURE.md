@@ -18,3 +18,12 @@ phones provide one full-height panel selected from the tab bar.
 The internal engine source is in `src/chart-engine`. Vite aliases expose only
 `@layr0/chart-engine` and its tiers; no application code imports an external
 chart package.
+
+## Kronos local forecast extension
+
+`services/kronos` is a local Python inference process, separate from the
+browser application and India Market Connector. The browser obtains its market
+history directly from IMC, filters completed bars, creates the next ten
+exchange-session timestamps from IMC calendar data, and posts only normalized
+OHLCV bars to `POST /v1/forecast`. The service has no IMC credential, order,
+portfolio, or broker integration and is intentionally local-only.
