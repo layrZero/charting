@@ -10,6 +10,15 @@ the workspace versioning policy and do not reintroduce reads of legacy `tv_*`
 state. Legal attribution for the incorporated source is kept in the repository
 third-party notices, separate from product documentation.
 
+## Built-in indicators
+
+The indicator tier is opt-in inside the internal engine. The Vite bootstrap
+imports `@layr0/chart-engine/indicators` and registers the complete built-in
+descriptor manifest before rendering React. This makes every copied OpenAlgo
+indicator available to the Indicators picker and chart widgets. New indicators
+must be added to that internal tier and covered by registry and rendering
+tests; do not import an external chart package or create a second registry.
+
 ## Forecast-series extension
 
 The Kronos overlay uses the public Layer Zero chart-engine API only. The

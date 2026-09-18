@@ -55,9 +55,21 @@ def forecast(request: ForecastRequest):
         ) from error
 
     try:
-        rows = runtime().forecast(bars, timestamps)
+        rows, cache_hit, fingerprint = runtime().forecast(
+            bars,
+            timestamps,
+            symbol=request.symbol,
+            exchange=request.exchange,
+            interval=request.interval,
+        )
         candles = normalize_predictions(rows, timestamps)
-        return {'candles': candles, 'generated_at': datetime.now(timezone.utc).isoformat(), 'model': 'Kronos-small'}
+        return {
+            'candles': candles,
+            'generated_at': datetime.now(timezone.utc).isoformat(),
+            'model': 'Kronos-small',
+            'input_fingerprint': fingerprint,
+            'cache_hit': cache_hit,
+        }
     except RuntimeError as error:
         logger.exception('Kronos runtime unavailable')
         raise HTTPException(

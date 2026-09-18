@@ -56,7 +56,10 @@ bash start.sh
 ```
 
 The startup script runs `uv sync`, verifies the pinned Kronos checkout, starts
-the forecast API, and starts the Vite frontend plus signal receiver. Open
+the forecast API, and starts the Vite frontend plus signal receiver. It first
+checks port `8001`: a healthy existing Kronos service is reused, while an
+unrelated process occupying that port stops startup with a diagnostic message.
+This makes rerunning `start.bat` or `start.sh` safe. Open
 `http://localhost:5001`. Enter the IMC REST URL, WebSocket URL, and API key in
 the connection settings dialog. Credentials stay in browser storage and are
 never sent to Kronos.
@@ -126,6 +129,10 @@ fulfilled violet/amber hollow forecast outlines over the actual candle.
 
 Forecasts are informational only and never place orders. No production routing
 or deployment configuration is included in this branch.
+
+All built-in indicators from the internal OpenAlgo-derived indicator tier are
+registered during application startup. The Indicators picker therefore exposes
+the complete copied catalog without an external chart package.
 
 If `uv` is missing, install it before starting. If bootstrap fails, confirm
 GitHub access and run `uv run --project services/kronos python

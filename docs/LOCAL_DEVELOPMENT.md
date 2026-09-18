@@ -39,8 +39,11 @@ bash start.sh
 ```
 
 Both launchers validate `uv`, Node, npm, and Git; run `uv sync`; bootstrap the
-pinned Kronos commit; start Kronos on `127.0.0.1:8001`; and start Vite plus the
-signal receiver on port `5001`.
+pinned Kronos commit; and start Vite plus the signal receiver on port `5001`.
+Before launching Kronos, they probe `127.0.0.1:8001/health`. A free port starts
+one Kronos process; a healthy existing Kronos service is reused; an occupied
+port belonging to another service causes a safe failure. The launchers never
+kill an unknown process.
 
 ## Manual startup
 
@@ -86,12 +89,17 @@ for this service. npm remains the dependency manager for the Vite application.
 
 ## Shutdown and troubleshooting
 
-Press `Ctrl+C` in Bash. On Windows, close the frontend terminal and the
-separate `Layr0 Kronos` window. If startup fails, check the following:
+Press `Ctrl+C` in Bash. On Windows, close the frontend terminal and, when this
+invocation started Kronos, the separate `Layr0 Kronos` window. If the launcher
+reused Kronos, leave that existing service running or stop it separately.
+If startup fails, check the following:
 
 - `uv` missing: install `uv` and reopen the terminal.
 - Bootstrap failure: verify GitHub access and rerun the bootstrap command.
-- Port conflict: stop the process using 5001 or 8001.
+- Port conflict: for port 8001 run `netstat -ano | findstr :8001`, then
+  `tasklist /FI "PID eq <PID>"`. A healthy local Kronos service is reused; an
+  unrelated owner must be stopped by its owning workflow. Apply the same check
+  to port 5001 if Vite cannot start.
 - Forecast unavailable: confirm the Kronos process is healthy on port 8001.
 - No chart data: confirm IMC is running, use the published `8080` gateway
   rather than container-internal ports `5000`/`8765`, and inspect the displayed

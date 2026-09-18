@@ -29,5 +29,10 @@ OHLCV bars to `POST /v1/forecast`. The service has no IMC credential, order,
 portfolio, or broker integration and is intentionally local-only.
 
 For local development, `start.sh` and `start.bat` run `uv sync`, bootstrap the
-pinned Kronos checkout, start the Kronos API on port 8001, and start the Vite
-application plus signal receiver on port 5001. See `docs/LOCAL_DEVELOPMENT.md`.
+pinned Kronos checkout, preflight port 8001, and start the Kronos API only when
+no healthy instance is already running. They then start the Vite application
+plus signal receiver on port 5001. See `docs/LOCAL_DEVELOPMENT.md`.
+
+The copied built-in indicator sources are an opt-in engine tier. The frontend
+bootstrap registers the complete tier once before rendering React, so the chart
+indicator picker and chart widgets share the same Layer Zero registry.
