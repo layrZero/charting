@@ -1,13 +1,26 @@
-import { ImcClient, normalizeHistory, normalizeDepth } from './imcClient.js';
+import { ImcClient, normalizeHistory, normalizeDepth, utcSecondsToImcDate } from './imcClient.js';
 
-const date = (seconds) => new Date(seconds * 1000).toISOString().slice(0, 10);
+const historyWindow = (from, to) => ({ start_date: utcSecondsToImcDate(from), end_date: utcSecondsToImcDate(to) });
 
 export class ImcMarketDataFeed {
   constructor(client = new ImcClient()) { this.client = client; }
   async getBars({ symbol, exchange, interval, from, to, signal }) {
     const now = Math.floor(Date.now() / 1000);
-    const payload = await this.client.history({ symbol, exchange, interval, start_date: date(from || now - 86400 * 365), end_date: date(to || now) }, { signal });
+    const start = from ?? now - 86400 * 365;
+    const end = to ?? now;
+    const payload = await this.client.history({ symbol, exchange, interval, ...historyWindow(start, end) }, { signal });
     return normalizeHistory(payload);
+  }
+  async getBarsPage({ symbol, exchange, interval, from, to, before, signal }) {
+    const end = Math.min(to ?? before, before);
+    const start = from ?? end - 86400 * 30;
+    const bars = await this.getBars({ symbol, exchange, interval, from: start, to: end, signal });
+    const older = bars.filter((bar) => bar.time < before);
+    return {
+      bars: older,
+      nextBefore: older[0]?.time ?? Math.min(before - 1, end - 1),
+      hasMore: undefined,
+    };
   }
   subscribeBars() {
     // IMC's browser stream is LTP/quote data, not a broker-authored OHLC bar.

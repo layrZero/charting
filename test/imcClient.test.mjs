@@ -1,8 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ImcClient, normalizeDepth, normalizeHistory } from '../src/services/imcClient.js';
+import { ImcClient, normalizeDepth, normalizeHistory, normalizeImcTimestamp, utcSecondsToImcDate } from '../src/services/imcClient.js';
 import { ImcMarketDataFeed } from '../src/services/imcFeeds.js';
 test('normalizes IMC history', () => { const bars = normalizeHistory({ data: [{ timestamp: '2026-01-02T09:15:00Z', open: '10', high: '12', low: '9', close: '11', volume: '20', oi: '5' }] }); assert.equal(bars[0].close, 11); assert.equal(bars[0].oi, 5); });
+test('normalizes epoch seconds and milliseconds without producing 1970 dates', () => {
+  const seconds = 1767345300;
+  assert.equal(normalizeImcTimestamp(seconds), seconds);
+  assert.equal(normalizeImcTimestamp(String(seconds)), seconds);
+  assert.equal(normalizeImcTimestamp(seconds * 1000), seconds);
+});
+test('parses unqualified IMC timestamps as IST and formats request dates in IST', () => {
+  assert.equal(normalizeImcTimestamp('2026-01-02 09:15:00'), 1767325500);
+  assert.equal(utcSecondsToImcDate(1767325500), '2026-01-02');
+  assert.equal(utcSecondsToImcDate(1767281400), '2026-01-01');
+});
+test('normalizes invalid history rows without silently creating invalid candles', () => {
+  const bars = normalizeHistory({ data: [{ timestamp: 1767345300, open: '10', high: '12', low: '9', close: '11' }, { timestamp: 'bad', close: '20' }] });
+  assert.equal(bars.length, 1);
+  assert.equal(bars[0].time, 1767345300);
+});
+test('requests older history pages from IMC using the exclusive cursor', async () => {
+  const calls = [];
+  const client = { history: async (input) => { calls.push(input); return { data: [{ timestamp: 1767325500, open: 1, high: 2, low: 1, close: 2 }, { timestamp: 1767411900, open: 2, high: 3, low: 2, close: 3 }] }; } };
+  const page = await new ImcMarketDataFeed(client).getBarsPage({ symbol: 'NIFTY', exchange: 'NSE_INDEX', interval: '5m', from: 1767000000, to: 1767400000, before: 1767400000, countBack: 500 });
+  assert.equal(page.bars.length, 1);
+  assert.equal(page.nextBefore, 1767325500);
+  assert.deepEqual(calls[0], { symbol: 'NIFTY', exchange: 'NSE_INDEX', interval: '5m', start_date: '2025-12-29', end_date: '2026-01-03' });
+});
 test('normalizes IMC depth', () => { const depth = normalizeDepth({ ltp: '123.4', depth: { bids: [{ price: '123', qty: '2' }], asks: [{ price: '124', quantity: '3' }] } }); assert.equal(depth.ltp, 123.4); assert.equal(depth.bids[0].qty, 2); assert.equal(depth.asks[0].qty, 3); });
 test('does not manufacture an OHLC candle from an LTP stream', () => {
   const unsubscribe = new ImcMarketDataFeed({ config: {} }).subscribeBars({ symbol: 'NIFTY', exchange: 'NSE_INDEX' }, () => { throw new Error('synthetic candle'); });

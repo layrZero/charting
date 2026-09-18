@@ -4,6 +4,36 @@
  */
 import { resolveImcConfig } from './imcConfig.js';
 
+const IST_OFFSET_SECONDS = 19_800;
+
+/** Convert IMC's mixed timestamp formats into the chart's UTC-second contract. */
+export const normalizeImcTimestamp = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  if (typeof value !== 'string' || value.trim() === '') throw new Error('IMC history contains an invalid timestamp');
+  const input = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(input)) {
+    const numeric = Number(input);
+    if (!Number.isFinite(numeric)) throw new Error('IMC history contains an invalid timestamp');
+    return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+  }
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(input)) {
+    const parsed = Date.parse(input.replace(' ', 'T'));
+    if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?$/.exec(input);
+  if (!match) throw new Error(`IMC history contains an unparseable timestamp: ${input}`);
+  const milliseconds = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0));
+  return Math.floor(milliseconds / 1000) - IST_OFFSET_SECONDS;
+};
+
+/** Format a UTC-second cursor as the IST calendar date required by IMC. */
+export const utcSecondsToImcDate = (seconds) => {
+  if (!Number.isFinite(Number(seconds))) throw new Error('IMC history requires a valid UTC cursor');
+  const date = new Date((Number(seconds) + IST_OFFSET_SECONDS) * 1000);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+};
+
 export const imcConfig = () => resolveImcConfig();
 
 export class ImcError extends Error {
@@ -91,10 +121,17 @@ export class ImcClient {
   cancelGttOrder(input) { return this.request('cancelgttorder', input); }
 }
 
-export const normalizeHistory = (payload) => (payload.data || []).map((row) => ({
-  time: Math.floor(new Date(row.timestamp || row.datetime || row.date).getTime() / 1000) || Number(row.timestamp),
-  open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume || 0), oi: Number(row.oi || 0),
-})).filter((bar) => Number.isFinite(bar.time) && Number.isFinite(bar.close));
+export const normalizeHistory = (payload) => (payload.data || []).flatMap((row) => {
+  try {
+    const time = normalizeImcTimestamp(row.timestamp ?? row.datetime ?? row.date ?? row.time);
+    const bar = {
+      time,
+      open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
+      volume: Number(row.volume || 0), oi: Number(row.oi || 0),
+    };
+    return Number.isFinite(bar.time) && [bar.open, bar.high, bar.low, bar.close].every(Number.isFinite) ? [bar] : [];
+  } catch { return []; }
+}).sort((a, b) => a.time - b.time);
 
 export const normalizeDepth = (message) => ({
   timeSec: Math.floor(Number(message.timestamp || Date.now()) / (Number(message.timestamp) > 1e12 ? 1000 : 1)),
