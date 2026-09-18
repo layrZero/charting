@@ -31,6 +31,10 @@ class ForecastContractTests(unittest.TestCase):
         self.assertEqual(candles[0]['time'], 220)
         self.assertEqual(len(candles), 10)
 
+    def test_rejects_empty_history_as_insufficient(self):
+        with self.assertRaisesRegex(ValueError, 'between 1 and 512'):
+            validate_request([], list(range(160, 760, 60)))
+
 
 if __name__ == '__main__':
     unittest.main()

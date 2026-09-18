@@ -28,3 +28,8 @@ code is changed. WebSocket LTP is never converted into an authoritative candle.
 Live validation remains a read-only external gate requiring a supplied IMC URL
 and API key. It must exercise search, history, holidays, and the displayed ten
 predictions without placing an order.
+
+Local startup must start IMC separately, then run the Charts launcher. Configure
+the IMC REST and WebSocket URLs and API key in the browser connection dialog.
+The launcher only starts the local Charts and Kronos processes; it does not
+start, modify, or deploy India Market Connector.

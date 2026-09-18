@@ -84,8 +84,18 @@ const calendarExchange = (exchange) => ({ NSE_INDEX: 'NSE', BSE_INDEX: 'BSE', NF
 export const loadForecastCalendar = async (client, lastTime, exchange) => {
   const year = istDate(lastTime).getUTCFullYear();
   const date = isoDate(istDate(lastTime));
-  const [currentTimings, ...holidays] = await Promise.all([client.marketTimings(date), client.marketHolidays(year), client.marketHolidays(year + 1)]);
-  const timing = (currentTimings.data || []).find((item) => item.exchange === calendarExchange(exchange));
+  const results = await Promise.allSettled([
+    client.marketTimings(date),
+    client.marketHolidays(year),
+    client.marketHolidays(year + 1),
+  ]);
+  const [timingsResult, holidaysResult, nextHolidaysResult] = results;
+  const currentTimings = timingsResult.status === 'fulfilled' ? timingsResult.value : null;
+  const holidays = [
+    holidaysResult.status === 'fulfilled' ? holidaysResult.value : [],
+    nextHolidaysResult.status === 'fulfilled' ? nextHolidaysResult.value : [],
+  ];
+  const timing = (Array.isArray(currentTimings?.data) ? currentTimings.data : []).find((item) => item.exchange === calendarExchange(exchange));
   if (!timing) return { holidays: holidaySet(holidays), session: {} };
   const start = istDate(Number(timing.start_time) / 1000); const end = istDate(Number(timing.end_time) / 1000);
   return { holidays: holidaySet(holidays), session: { openMinutes: start.getUTCHours() * 60 + start.getUTCMinutes(), closeMinutes: end.getUTCHours() * 60 + end.getUTCMinutes() } };

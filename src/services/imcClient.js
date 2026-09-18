@@ -2,30 +2,48 @@
  * India Market Connector client used by the independent chart terminal.
  * No IMC frontend code is imported here: this is the browser-side contract.
  */
-const defaultApiUrl = 'http://127.0.0.1:5000';
-const defaultWsUrl = 'ws://127.0.0.1:8765/ws';
+import { resolveImcConfig } from './imcConfig.js';
 
-export const imcConfig = () => ({
-  apiUrl: (import.meta.env.VITE_IMC_API_URL || localStorage.getItem('imc_api_url') || defaultApiUrl).replace(/\/$/, ''),
-  wsUrl: import.meta.env.VITE_IMC_WS_URL || localStorage.getItem('imc_ws_url') || defaultWsUrl,
-  apiKey: localStorage.getItem('imc_apikey') || '',
-});
+export const imcConfig = () => resolveImcConfig();
 
 export class ImcError extends Error {
   constructor(message, status, body) { super(message); this.name = 'ImcError'; this.status = status; this.body = body; }
 }
+
+const readableMessage = (value, fallback) => {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (value && typeof value === 'object') {
+    try { return Object.entries(value).map(([key, item]) => `${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('; '); } catch { return fallback; }
+  }
+  return fallback;
+};
 
 export class ImcClient {
   constructor(config = imcConfig()) { this.config = config; }
   get apiKey() { return this.config.apiKey; }
 
   async request(path, body = {}, { signal } = {}) {
-    const response = await fetch(`${this.config.apiUrl}/api/v1/${path}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-      body: JSON.stringify({ apikey: this.apiKey, ...body }),
-    });
+    const url = `${this.config.apiUrl}/api/v1/${path}`;
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+        body: JSON.stringify({ apikey: this.apiKey, ...body }),
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      throw new ImcError(`Unable to reach IMC at ${this.config.apiUrl}. Check the gateway, browser CORS policy, and network connection.`, 0, {
+        error_code: 'IMC_NETWORK_OR_CORS_ERROR',
+        path,
+        endpoint: this.config.apiUrl,
+        cause: error?.message,
+      });
+    }
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.status === 'error') throw new ImcError(payload.message || `IMC ${path} failed`, response.status, payload);
+    if (!response.ok || payload.status === 'error') {
+      const code = payload.error_code ? ` [${payload.error_code}]` : '';
+      throw new ImcError(`${readableMessage(payload.message, `IMC ${path} failed`)}${code}`, response.status, payload);
+    }
     return payload;
   }
 

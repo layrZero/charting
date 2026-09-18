@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_SOURCE = ROOT / '.deps' / 'Kronos'
 
 
+def timestamp_series(values):
+    """Convert Unix-second timestamps to the Series Kronos expects."""
+    return pd.Series(pd.to_datetime(values, unit='s', utc=True), name='timestamp')
+
+
 class KronosRuntime:
     def __init__(self):
         source = Path(os.environ.get('KRONOS_SOURCE_DIR', DEFAULT_SOURCE))
@@ -27,11 +32,11 @@ class KronosRuntime:
 
     def forecast(self, bars, timestamps):
         frame = pd.DataFrame(bars)
-        x_timestamp = pd.to_datetime(frame.pop('time'), unit='s', utc=True)
+        x_timestamp = timestamp_series(frame.pop('time'))
         prediction = self._predictor.predict(
             df=frame[['open', 'high', 'low', 'close', 'volume']],
             x_timestamp=x_timestamp,
-            y_timestamp=pd.to_datetime(timestamps, unit='s', utc=True),
+            y_timestamp=timestamp_series(timestamps),
             pred_len=10, T=1.0, top_p=0.9, sample_count=1,
         )
         return prediction.to_dict(orient='records')

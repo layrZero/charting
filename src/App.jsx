@@ -4,7 +4,7 @@ import ChartTerminal from './components/OpenAlgoTerminal/ChartTerminal';
 import OptionChainPanel from './components/OpenAlgoTerminal/OptionChainPanel';
 import TradingPanel from './components/OpenAlgoTerminal/TradingPanel';
 import PortfolioPanel from './components/OpenAlgoTerminal/PortfolioPanel';
-import { ImcClient } from './services/imcClient';
+import { ImcClient, imcConfig } from './services/imcClient';
 import { loadWorkspace, saveWorkspace } from './services/workspace';
 import './App.css';
 
@@ -24,9 +24,10 @@ export default function App() {
 }
 
 function ConnectionSettings({ onClose, forecastMode, onForecastModeChange }) {
-  const [apiUrl, setApiUrl] = useState(localStorage.getItem('imc_api_url') || import.meta.env.VITE_IMC_API_URL || 'http://127.0.0.1:5000');
-  const [wsUrl, setWsUrl] = useState(localStorage.getItem('imc_ws_url') || import.meta.env.VITE_IMC_WS_URL || 'ws://127.0.0.1:8765/ws');
-  const [apiKey, setApiKey] = useState(localStorage.getItem('imc_apikey') || '');
+  const config = imcConfig();
+  const [apiUrl, setApiUrl] = useState(config.apiUrl);
+  const [wsUrl, setWsUrl] = useState(config.wsUrl);
+  const [apiKey, setApiKey] = useState(config.apiKey);
   const save = (event) => { event.preventDefault(); localStorage.setItem('imc_api_url', apiUrl); localStorage.setItem('imc_ws_url', wsUrl); localStorage.setItem('imc_apikey', apiKey); onClose(); };
   return <div className="modal-backdrop"><form className="connection-dialog" onSubmit={save}><h2>IMC connection</h2><label>REST URL<input required value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} /></label><label>WebSocket URL<input required value={wsUrl} onChange={(e) => setWsUrl(e.target.value)} /></label><label>API key<input required type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label><label>Forecast display<select value={forecastMode} onChange={(e) => onForecastModeChange(e.target.value)}><option value="rolling-10">Only the next 10 predicted candles</option><option value="retain-fulfilled-overlays">Keep fulfilled forecast outlines</option></select></label><p>Credentials stay in this browser and are sent only to the configured IMC server. Kronos receives only normalized market bars.</p><footer><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save & reload</button></footer></form></div>;
 }

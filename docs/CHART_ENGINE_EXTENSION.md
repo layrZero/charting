@@ -17,3 +17,8 @@ terminal creates two `candlestick` series on the primary price pane: a
 semi-transparent violet/amber future series and, when enabled, a hollow
 violet/amber fulfilled-forecast series. Both are removed during widget
 teardown, so they do not alter drawings, indicators, or saved chart state.
+
+The overlay is available only while the local Kronos API is running on port
+8001. Start the complete stack with `start.sh` or `start.bat`, or start the
+Kronos process manually with the `uv run` commands in
+`docs/LOCAL_DEVELOPMENT.md`.

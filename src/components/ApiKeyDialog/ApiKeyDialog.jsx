@@ -1,11 +1,21 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 
-const DEFAULT_HOST = 'http://127.0.0.1:5000';
+const DEFAULT_HOST = 'http://127.0.0.1:8080';
+
+const resolveSavedHost = () => {
+    const saved = localStorage.getItem('oa_host_url');
+    if (saved === 'http://127.0.0.1:5000' || saved === 'http://localhost:5000') {
+        localStorage.setItem('oa_host_url', DEFAULT_HOST);
+        return DEFAULT_HOST;
+    }
+    return saved || DEFAULT_HOST;
+};
 
 const ApiKeyDialog = ({ onSave, onClose }) => {
+    void onClose;
     const [hostUrl, setHostUrl] = useState(() => {
-        return localStorage.getItem('oa_host_url') || DEFAULT_HOST;
+        return resolveSavedHost();
     });
     const [apiKey, setApiKey] = useState('');
     const [showApiKey, setShowApiKey] = useState(false);
@@ -52,7 +62,7 @@ const ApiKeyDialog = ({ onSave, onClose }) => {
                         // Mark that cloud data has been loaded to skip cloud sync
                         localStorage.setItem('_cloud_sync_done', 'true');
                     }
-                } catch (parseError) {
+                } catch {
                     console.warn('[ApiKeyDialog] Could not parse preferences, cloud sync will handle it');
                 }
 
@@ -145,11 +155,11 @@ const ApiKeyDialog = ({ onSave, onClose }) => {
                             type="text"
                             value={hostUrl}
                             onChange={(e) => setHostUrl(e.target.value)}
-                            placeholder="http://127.0.0.1:5000"
+                            placeholder="http://127.0.0.1:8080"
                             style={inputStyle}
                         />
                         <p style={hintStyle}>
-                            Default: http://127.0.0.1:5000
+                            Default: http://127.0.0.1:8080
                         </p>
                     </div>
 

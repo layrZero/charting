@@ -27,3 +27,7 @@ history directly from IMC, filters completed bars, creates the next ten
 exchange-session timestamps from IMC calendar data, and posts only normalized
 OHLCV bars to `POST /v1/forecast`. The service has no IMC credential, order,
 portfolio, or broker integration and is intentionally local-only.
+
+For local development, `start.sh` and `start.bat` run `uv sync`, bootstrap the
+pinned Kronos checkout, start the Kronos API on port 8001, and start the Vite
+application plus signal receiver on port 5001. See `docs/LOCAL_DEVELOPMENT.md`.

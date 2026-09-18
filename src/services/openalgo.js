@@ -5,9 +5,7 @@
 
 import logger from '../utils/logger.js';
 import { ConnectionState, setConnectionStatus } from './connectionStatus';
-
-const DEFAULT_HOST = 'http://127.0.0.1:5000';
-const DEFAULT_WS_HOST = '127.0.0.1:8765';
+import { resolveImcConfig } from './imcConfig.js';
 
 /**
  * Global registry of active WebSocket connections
@@ -46,7 +44,7 @@ export const forceCloseAllWebSockets = () => {
             } else if (ws && typeof ws.close === 'function') {
                 ws.close();
             }
-        } catch (error) {
+        } catch {
             // Ignore errors during force close
         }
     });
@@ -55,7 +53,8 @@ export const forceCloseAllWebSockets = () => {
 
 /**
  * Get Host URL from environment variables or localStorage settings or use default
- * Priority: ENV VAR > localStorage > DEFAULT
+ * Explicit OpenAlgo production overrides remain supported. Otherwise use the
+ * same IMC gateway resolver as the current terminal.
  */
 export const getHostUrl = () => {
     // In production build, use environment variable
@@ -63,7 +62,7 @@ export const getHostUrl = () => {
         return import.meta.env.VITE_OA_HOST_URL;
     }
     // Fallback to localStorage (for runtime configuration)
-    return localStorage.getItem('oa_host_url') || DEFAULT_HOST;
+    return resolveImcConfig().apiUrl;
 };
 
 /**
@@ -79,7 +78,7 @@ const shouldUseProxy = () => {
 
     const hostUrl = getHostUrl();
     // Use proxy when host is default localhost and we're running on localhost
-    const isDefaultHost = hostUrl === DEFAULT_HOST || hostUrl === 'http://localhost:5000' || hostUrl === 'http://127.0.0.1:5000';
+    const isDefaultHost = hostUrl === resolveImcConfig().apiUrl;
     const isLocalDev = typeof window !== 'undefined' &&
         (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     return isDefaultHost && isLocalDev;
@@ -109,8 +108,10 @@ export const getLoginUrl = () => {
  * Automatically uses wss:// for HTTPS hosts, ws:// for HTTP hosts
  */
 const getWebSocketUrl = () => {
-    // Get WS host from env or localStorage
-    const wsHost = import.meta.env.VITE_OA_WS_URL || localStorage.getItem('oa_ws_url') || DEFAULT_WS_HOST;
+    // Preserve explicit OpenAlgo overrides for deployments that still use them.
+    const explicitWs = import.meta.env.VITE_OA_WS_URL || localStorage.getItem('oa_ws_url');
+    const resolvedWs = explicitWs || resolveImcConfig().wsUrl;
+    const wsHost = resolvedWs.replace(/^wss?:\/\//, '');
 
     // Auto-detect protocol based on main host URL
     const hostUrl = getHostUrl();
@@ -153,7 +154,7 @@ export const checkAuth = async () => {
  * Get API key from localStorage (set by OpenAlgo after login)
  */
 const getApiKey = () => {
-    return localStorage.getItem('oa_apikey') || '';
+    return resolveImcConfig().apiKey;
 };
 
 /**
@@ -400,6 +401,7 @@ const createManagedWebSocket = (urlBuilder, options) => {
  */
 export const getKlines = async (symbol, exchange = 'NSE', interval = '1d', limit = 1000, signal) => {
     try {
+        void limit; // Retain the public signature while IMC history uses date ranges.
         // Calculate date range (last 2 years for daily, adjust for intraday)
         const endDate = new Date();
         const startDate = new Date();

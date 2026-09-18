@@ -45,7 +45,17 @@ export default function ChartTerminal({ client, active, onActiveChange, theme, f
         setForecast({ status: 'Kronos forecast — not trading advice', generatedAt: result.generated_at || new Date().toISOString(), count: candles.length }); scheduleRefresh(futureTimestamps[0] + intervalSeconds(createdWidget.interval()));
       } catch (caught) {
         if (caught.name === 'AbortError' || requestId !== generation.current) return;
-        futureSeries.setData([]); setError(caught.message || 'Kronos forecast unavailable.'); setForecast({ status: 'Forecast unavailable', generatedAt: null, count: 0 });
+        futureSeries.setData([]);
+        const statusByCode = {
+          INVALID_FORECAST_REQUEST: 'Forecast request invalid',
+          INVALID_FORECAST_RESPONSE: 'Forecast response invalid',
+          KRONOS_RUNTIME_UNAVAILABLE: 'Kronos model unavailable',
+          KRONOS_INFERENCE_FAILED: 'Kronos inference failed',
+          KRONOS_SERVICE_UNAVAILABLE: 'Kronos service unavailable',
+          KRONOS_NETWORK_ERROR: 'Kronos service unavailable',
+        };
+        setError(caught.message || 'Kronos forecast unavailable.');
+        setForecast({ status: statusByCode[caught.code] || 'Forecast unavailable', generatedAt: null, count: 0 });
       }
     };
     const offSymbol = createdWidget.on('symbol', ({ symbol, exchange }) => { clearForecast(); callbacks.current.onActiveChange({ symbol, exchange }); });
