@@ -11,6 +11,8 @@ if not exist .env.local copy .env.example .env.local
 if not exist node_modules npm install
 
 uv sync --project services/timesfm || exit /b 1
+echo Checking TimesFM device capability...
+uv run --project services/timesfm python services/timesfm/device_diagnostics.py || exit /b 1
 
 for /f "delims=" %%A in ('node scripts\timesfm-preflight.mjs') do set "TIMESFM_ACTION=%%A"
 if errorlevel 2 exit /b 1

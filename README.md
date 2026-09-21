@@ -20,7 +20,7 @@ cp .env.example .env.local
 ./start.sh
 ```
 
-The launcher runs TimesFM on `127.0.0.1:8001` and Vite on `localhost:5001`. Re-running it reuses a healthy TimesFM service and never terminates an unknown process. The first forecast downloads and loads the `google/timesfm-3.0-pytorch` checkpoint and may take several minutes.
+The launcher runs TimesFM on `127.0.0.1:8001` and Vite on `localhost:5001`. Re-running it reuses a healthy TimesFM service and never terminates an unknown process. It uses the existing `services/timesfm/.venv` and shared uv cache; it does not create a second Python environment. On this development machine the pinned PyTorch build includes CUDA support for the RTX 3050, while runtime selection still falls back safely to CPU. The first forecast downloads and loads the `google/timesfm-3.0-pytorch` checkpoint and may take several minutes.
 
 Manual service startup:
 
@@ -39,6 +39,8 @@ Invoke-RestMethod http://127.0.0.1:8001/health
 
 The service uses TimesFM source revision `v3.0.0` and checkpoint `google/timesfm-3.0-pytorch`. It receives normalized completed OHLCV candles and future timestamps only. It returns ten multivariate OHLCV candles plus native P10/P25/P50/P75/P90 quantile ranges. It does not receive IMC credentials, place orders, generate signals, or convert LTP ticks into candles.
 
+At startup, `TIMESFM_DEVICE=auto` selects CUDA when the installed PyTorch build can initialize the NVIDIA GPU; otherwise it reports a CPU fallback. `/health` exposes the requested and selected device, GPU name, PyTorch CUDA build, and VRAM without credentials. `TIMESFM_REQUIRE_CUDA=true` turns an unavailable CUDA device into a clear startup failure. The CUDA runtime is supplied by the pinned PyTorch wheel; the system CUDA Toolkit is used for diagnostics and is not copied into the repository.
+
 The local endpoints are `GET /health`, `POST /v1/forecast`, `POST /v1/calibration`, `GET /v1/calibration/status`, and `POST /v1/calibration/refresh`. Native forecasts appear immediately. A local 32-origin walk-forward calibration runs asynchronously per symbol, exchange, interval, and history fingerprint, and is stored in `services/timesfm/data/timesfm_calibration.sqlite3`. Calibrated quantiles replace native display lines after completion. Calibration is historical diagnostic evidence, not a probability that a forecast will succeed.
 
 ## Licensing boundary
@@ -51,13 +53,18 @@ TimesFM source is Apache-2.0. The default TimesFM 3 pretrained weights are curre
 VITE_FORECAST_URL=http://127.0.0.1:8001
 TIMESFM_MODEL_ID=google/timesfm-3.0-pytorch
 TIMESFM_SOURCE_REVISION=v3.0.0
-TIMESFM_DEVICE=cpu
+TIMESFM_DEVICE=auto
+TIMESFM_REQUIRE_CUDA=false
+TIMESFM_CUDA_MEMORY_FRACTION=0.85
 TIMESFM_MAX_CONTEXT=512
 TIMESFM_MAX_HORIZON=10
 TIMESFM_ALLOW_NONCOMMERCIAL_WEIGHTS=true
 TIMESFM_CALIBRATION_TTL_HOURS=24
 TIMESFM_CALIBRATION_MIN_NEW_BARS=16
 TIMESFM_CALIBRATION_ORIGINS=32
+TIMESFM_CALIBRATION_BATCH_SIZE=4
+TIMESFM_CALIBRATION_MAX_SECONDS=600
+TIMESFM_CALIBRATION_DEVICE=auto
 TIMESFM_CALIBRATION_VERSION=1
 ```
 

@@ -37,6 +37,13 @@ export const requestTimesFMCalibrationStatus = async (contextKey, signal) => {
   return payload;
 };
 
+export const requestTimesFMCalibrationStatusByRunId = async (runId, signal) => {
+  const response = await fetch(`${timesFMForecastUrl()}/v1/calibration/status?run_id=${encodeURIComponent(runId)}`, { signal });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new TimesFMForecastError('Unable to read TimesFM calibration status.', { code: 'TIMESFM_CALIBRATION_STATUS_FAILED', status: response.status });
+  return payload;
+};
+
 export const startTimesFMCalibration = async ({ symbol, exchange, interval, bars, futureTimestamps, requestId, signal }) => {
   const response = await fetch(`${timesFMForecastUrl()}/v1/calibration`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, exchange, interval, bars, future_timestamps: futureTimestamps, request_id: requestId }) });
   const payload = await response.json().catch(() => ({}));

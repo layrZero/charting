@@ -6,13 +6,33 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from pathlib import Path
 from threading import RLock
 
 import numpy as np
+from device import resolve_device
+
+
+def _load_local_environment():
+    """Load non-secret local settings without overriding the parent process."""
+    env_file = Path(__file__).resolve().parents[2] / '.env.local'
+    if not env_file.exists():
+        return
+    for raw_line in env_file.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        name, value = line.split('=', 1)
+        os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_local_environment()
 
 MODEL_ID = os.environ.get('TIMESFM_MODEL_ID', 'google/timesfm-3.0-pytorch')
 MODEL_REVISION = os.environ.get('TIMESFM_SOURCE_REVISION', 'v3.0.0')
-DEVICE = os.environ.get('TIMESFM_DEVICE', 'cpu')
+DEVICE = os.environ.get('TIMESFM_DEVICE', 'auto')
+REQUIRE_CUDA = os.environ.get('TIMESFM_REQUIRE_CUDA', 'false').lower() == 'true'
+CUDA_MEMORY_FRACTION = min(0.99, max(0.1, float(os.environ.get('TIMESFM_CUDA_MEMORY_FRACTION', '0.85'))))
 MAX_CONTEXT = max(1, int(os.environ.get('TIMESFM_MAX_CONTEXT', '512')))
 MAX_HORIZON = max(1, int(os.environ.get('TIMESFM_MAX_HORIZON', '10')))
 ALLOW_NONCOMMERCIAL_WEIGHTS = os.environ.get('TIMESFM_ALLOW_NONCOMMERCIAL_WEIGHTS', 'true').lower() == 'true'
@@ -41,6 +61,7 @@ class TimesFMRuntime:
         self._cache = OrderedDict()
         self._cache_lock = RLock()
         self._state = 'not_loaded'
+        self._device_info = resolve_device(DEVICE, REQUIRE_CUDA)
 
     @property
     def model_ready(self):
@@ -50,6 +71,10 @@ class TimesFMRuntime:
     def readiness(self):
         return self._state
 
+    @property
+    def device_info(self):
+        return self._device_info.as_dict()
+
     def _load(self):
         if self._forecaster is not None:
             return self._forecaster
@@ -58,7 +83,10 @@ class TimesFMRuntime:
             if not ALLOW_NONCOMMERCIAL_WEIGHTS:
                 raise RuntimeError('TimesFM 3 weights are enabled only for non-commercial development and evaluation.')
             from timesfm3 import ModelConfig, TimesFM3Evaluator
-            self._forecaster = TimesFM3Evaluator(ModelConfig(checkpoint_path=MODEL_ID, per_core_batch_size=1, device=DEVICE))
+            if self._device_info.selected == 'cuda':
+                import torch
+                torch.cuda.set_per_process_memory_fraction(CUDA_MEMORY_FRACTION)
+            self._forecaster = TimesFM3Evaluator(ModelConfig(checkpoint_path=MODEL_ID, per_core_batch_size=1, device=self._device_info.selected))
             self._state = 'ready'
             return self._forecaster
         except Exception:
@@ -71,6 +99,61 @@ class TimesFMRuntime:
         if any('volume' in bar for bar in bars):
             channels.append([float(bar.get('volume') or 0) for bar in bars])
         return np.asarray(channels, dtype=np.float32)
+
+    @staticmethod
+    def _output_values(output):
+        point_value = getattr(output, 'forecast', None) if not isinstance(output, dict) else output.get('forecast')
+        quantile_value = getattr(output, 'quantiles', None) if not isinstance(output, dict) else output.get('quantiles')
+        point = _finite_array(point_value)
+        quantiles = _ordered_quantiles(quantile_value)
+        if point.ndim == 1:
+            point = point[None, :]
+        if quantiles.ndim == 2:
+            quantiles = quantiles[None, :, :]
+        return point, quantiles
+
+    def _build_result(self, bars, timestamps, output, calibration=None):
+        point, quantiles = self._output_values(output)
+        if point.shape[0] < 4 or point.shape[1] != len(timestamps) or quantiles.shape[:2] != (point.shape[0], len(timestamps)):
+            raise RuntimeError('TimesFM returned an invalid multivariate horizon.')
+        quantile_names = ('P10', 'P25', 'P50', 'P75', 'P90')
+        close_quantiles = {name: quantiles[3, :, index] for name, index in zip(quantile_names, (0, 1, 4, 7, 8))}
+        native_offsets = (calibration or {}).get('offsets', {})
+        calibrated_quantiles = {name: np.asarray(values, dtype=np.float64) + np.asarray(native_offsets.get(name, [0.0] * len(timestamps)), dtype=np.float64) for name, values in close_quantiles.items()} if calibration else None
+        selected_quantiles = calibrated_quantiles or close_quantiles
+        selected_quantiles = {name: np.asarray(values, dtype=np.float64) for name, values in selected_quantiles.items()}
+        for index in range(len(timestamps)):
+            ordered = sorted(selected_quantiles[name][index] for name in quantile_names)
+            for name, value in zip(quantile_names, ordered):
+                selected_quantiles[name][index] = value
+        previous_close = float(bars[-1]['close'])
+        candles, horizon = [], []
+        for index, timestamp in enumerate(timestamps):
+            open_value, close_value = float(point[0, index]), float(point[3, index])
+            high_value = max(float(point[1, index]), open_value, close_value)
+            low_value = min(float(point[2, index]), open_value, close_value)
+            volume_value = max(0.0, float(point[4, index])) if point.shape[0] > 4 else 0.0
+            candles.append({'time': int(timestamp), 'open': open_value, 'high': high_value, 'low': low_value, 'close': close_value, 'volume': volume_value})
+            median_close = float(selected_quantiles['P50'][index])
+            horizon.append({'timestamp': int(timestamp), 'p10': float(selected_quantiles['P10'][index]), 'p25': float(selected_quantiles['P25'][index]), 'p50': median_close, 'p75': float(selected_quantiles['P75'][index]), 'p90': float(selected_quantiles['P90'][index]), 'quantiles': {name: float(selected_quantiles[name][index]) for name in quantile_names}, 'direction': 'up' if median_close >= previous_close else 'down', 'directional_agreement': None, 'up_members': None, 'down_members': None})
+            previous_close = median_close
+        return {'candles': candles, 'uncertainty': {'horizon': horizon, 'ensemble_size': 1, 'quantile_source': 'timesfm-native', 'calibration_status': 'ready' if calibration else 'not-run', 'display_source': 'calibrated' if calibration else 'native', 'native_quantiles': {name: [float(value) for value in values] for name, values in close_quantiles.items()}, 'calibrated_quantiles': {name: [float(value) for value in values] for name, values in calibrated_quantiles.items()} if calibrated_quantiles else None}, 'generated_at': datetime.now(timezone.utc).isoformat(), 'model': 'TimesFM-3.0'}
+
+    def forecast_batch(self, requests, *, cancel_check=None):
+        """Run multiple walk-forward contexts in one model call."""
+        if not requests:
+            return []
+        if cancel_check:
+            cancel_check()
+        outputs = list(self._load().predict_batch(contexts=[self._context(item['bars'][-MAX_CONTEXT:]) for item in requests], horizon=len(requests[0]['timestamps']), return_quantiles=True, use_symmetric_averaging=False))
+        if len(outputs) != len(requests):
+            raise RuntimeError('TimesFM returned an unexpected batch size.')
+        results = []
+        for item, output in zip(requests, outputs):
+            if cancel_check:
+                cancel_check()
+            results.append(self._build_result(item['bars'], item['timestamps'], output))
+        return results
 
     def forecast(self, bars, timestamps, *, symbol='', exchange='', interval='', cancel_check=None, calibration=None):
         if len(timestamps) != MAX_HORIZON:
@@ -100,41 +183,7 @@ class TimesFMRuntime:
         if not outputs:
             raise RuntimeError('TimesFM returned no forecast output.')
         output = outputs[0]
-        point_value = getattr(output, 'forecast', None) if not isinstance(output, dict) else output.get('forecast')
-        quantile_value = getattr(output, 'quantiles', None) if not isinstance(output, dict) else output.get('quantiles')
-        point = _finite_array(point_value)
-        quantiles = _ordered_quantiles(quantile_value)
-        if point.ndim == 1:
-            point = point[None, :]
-        if quantiles.ndim == 2:
-            quantiles = quantiles[None, :, :]
-        if point.shape[0] < 4 or point.shape[1] != len(timestamps) or quantiles.shape[:2] != (point.shape[0], len(timestamps)):
-            raise RuntimeError('TimesFM returned an invalid multivariate horizon.')
-        quantile_names = ('P10', 'P25', 'P50', 'P75', 'P90')
-        close_quantiles = {name: quantiles[3, :, index] for name, index in zip(quantile_names, (0, 1, 4, 7, 8))}
-        native_offsets = (calibration or {}).get('offsets', {})
-        calibrated_quantiles = {
-            name: np.asarray(values, dtype=np.float64) + np.asarray(native_offsets.get(name, [0.0] * len(timestamps)), dtype=np.float64)
-            for name, values in close_quantiles.items()
-        } if calibration else None
-        selected_quantiles = calibrated_quantiles or close_quantiles
-        selected_quantiles = {name: np.asarray(values, dtype=np.float64) for name, values in selected_quantiles.items()}
-        for index in range(len(timestamps)):
-            ordered = sorted(selected_quantiles[name][index] for name in quantile_names)
-            for name, value in zip(quantile_names, ordered):
-                selected_quantiles[name][index] = value
-        previous_close = float(bars[-1]['close'])
-        candles, horizon = [], []
-        for index, timestamp in enumerate(timestamps):
-            open_value, close_value = float(point[0, index]), float(point[3, index])
-            high_value = max(float(point[1, index]), open_value, close_value)
-            low_value = min(float(point[2, index]), open_value, close_value)
-            volume_value = max(0.0, float(point[4, index])) if point.shape[0] > 4 else 0.0
-            candles.append({'time': int(timestamp), 'open': open_value, 'high': high_value, 'low': low_value, 'close': close_value, 'volume': volume_value})
-            median_close = float(selected_quantiles['P50'][index])
-            horizon.append({'timestamp': int(timestamp), 'p10': float(selected_quantiles['P10'][index]), 'p25': float(selected_quantiles['P25'][index]), 'p50': median_close, 'p75': float(selected_quantiles['P75'][index]), 'p90': float(selected_quantiles['P90'][index]), 'quantiles': {name: float(selected_quantiles[name][index]) for name in quantile_names}, 'direction': 'up' if median_close >= previous_close else 'down', 'directional_agreement': None, 'up_members': None, 'down_members': None})
-            previous_close = median_close
-        result = {'candles': candles, 'uncertainty': {'horizon': horizon, 'ensemble_size': 1, 'quantile_source': 'timesfm-native', 'calibration_status': 'ready' if calibration else 'not-run', 'display_source': 'calibrated' if calibration else 'native', 'native_quantiles': {name: [float(value) for value in values] for name, values in close_quantiles.items()}, 'calibrated_quantiles': {name: [float(value) for value in values] for name, values in calibrated_quantiles.items()} if calibrated_quantiles else None}, 'generated_at': datetime.now(timezone.utc).isoformat(), 'model': 'TimesFM-3.0'}
+        result = self._build_result(bars, timestamps, output, calibration)
         with self._cache_lock:
             self._cache[fingerprint] = json.loads(json.dumps(result))
             self._cache.move_to_end(fingerprint)

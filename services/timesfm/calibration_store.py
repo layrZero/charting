@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -21,6 +22,7 @@ class CalibrationStore:
                 CREATE TABLE IF NOT EXISTS calibration_runs (
                     run_id TEXT PRIMARY KEY,
                     context_key TEXT NOT NULL UNIQUE,
+                    stable_context_key TEXT,
                     symbol TEXT NOT NULL,
                     exchange TEXT NOT NULL,
                     interval TEXT NOT NULL,
@@ -57,6 +59,9 @@ class CalibrationStore:
             columns = {row[1] for row in connection.execute('PRAGMA table_info(calibration_runs)')}
             if 'history_bars' not in columns:
                 connection.execute('ALTER TABLE calibration_runs ADD COLUMN history_bars INTEGER NOT NULL DEFAULT 0')
+            if 'stable_context_key' not in columns:
+                connection.execute('ALTER TABLE calibration_runs ADD COLUMN stable_context_key TEXT')
+            connection.execute('CREATE INDEX IF NOT EXISTS idx_calibration_scope ON calibration_runs (stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, status)')
             connection.commit()
 
     def _connect(self):
@@ -67,6 +72,13 @@ class CalibrationStore:
     @staticmethod
     def _now():
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _legacy_scope(row):
+        if row[2]:
+            return row[2]
+        payload = {'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'model': row[6], 'revision': row[7], 'version': row[8]}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
     def get_ready(self, context_key, *, ttl_seconds, minimum_new_bars, current_bar_count):
         with self._lock, closing(self._connect()) as connection:
@@ -80,13 +92,36 @@ class CalibrationStore:
             if age > ttl_seconds or current_bar_count - int(row[2]) >= minimum_new_bars:
                 return None
             results = connection.execute('SELECT horizon, offsets FROM calibration_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
-            return {'run_id': row[0], 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready'}
+            return {'run_id': row[0], 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready', 'completed_at': row[1], 'history_bars': int(row[2])}
 
-    def begin(self, *, run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars):
+    def get_reusable(self, *, stable_context_key, symbol, exchange, interval, model_id, model_revision, version, ttl_seconds, minimum_new_bars, current_bar_count):
+        """Return the newest usable ready result for a stable chart scope.
+
+        Older databases did not have stable_context_key; the identifying columns
+        are intentionally included in the query so those records remain reusable.
+        """
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute('''SELECT run_id, completed_at, history_bars, stable_context_key
+                FROM calibration_runs
+                WHERE status=? AND symbol=? AND exchange=? AND interval=? AND model_id=? AND model_revision=? AND calibration_version=?
+                  AND (stable_context_key=? OR stable_context_key IS NULL)
+                ORDER BY completed_at DESC LIMIT 1''', ('ready', symbol, exchange, interval, model_id, model_revision, version, stable_context_key)).fetchone()
+            if not row:
+                return None
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(row[1])).total_seconds()
+            except (TypeError, ValueError):
+                return None
+            if age > ttl_seconds or current_bar_count - int(row[2]) >= minimum_new_bars:
+                return None
+            results = connection.execute('SELECT horizon, offsets FROM calibration_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
+            return {'run_id': row[0], 'stable_context_key': row[3] or stable_context_key, 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready', 'completed_at': row[1], 'history_bars': int(row[2])}
+
+    def begin(self, *, run_id, context_key, stable_context_key=None, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars):
         with self._lock, closing(self._connect()) as connection:
             connection.execute('''INSERT OR REPLACE INTO calibration_runs
-                (run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, status, origins, history_bars, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, self._now()))
+                (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, status, origins, history_bars, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, self._now()))
             connection.commit()
 
     def complete(self, run_id, offsets_by_horizon, coverage_by_horizon, origin_rows):
@@ -107,12 +142,29 @@ class CalibrationStore:
 
     def status(self, context_key):
         with self._lock, self._connect() as connection:
-            row = connection.execute('SELECT run_id, status, origins, started_at, completed_at, error FROM calibration_runs WHERE context_key=? ORDER BY started_at DESC LIMIT 1', (context_key,)).fetchone()
+            row = connection.execute('SELECT run_id, status, stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, history_bars, origins, started_at, completed_at, error FROM calibration_runs WHERE context_key=? OR stable_context_key=? ORDER BY started_at DESC LIMIT 1', (context_key, context_key)).fetchone()
             if not row:
                 return None
-            return {'run_id': row[0], 'status': row[1], 'total_origins': row[2], 'started_at': row[3], 'completed_at': row[4], 'error': row[5]}
+            return {'run_id': row[0], 'status': row[1], 'stable_context_key': self._legacy_scope(row), 'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'history_bars': row[9], 'total_origins': row[10], 'started_at': row[11], 'completed_at': row[12], 'error': row[13]}
+
+    def status_by_run_id(self, run_id):
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute('SELECT run_id, status, stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, history_bars, origins, started_at, completed_at, error FROM calibration_runs WHERE run_id=?', (run_id,)).fetchone()
+            if not row:
+                return None
+            return {'run_id': row[0], 'status': row[1], 'stable_context_key': self._legacy_scope(row), 'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'history_bars': row[9], 'total_origins': row[10], 'started_at': row[11], 'completed_at': row[12], 'error': row[13]}
 
     def invalidate(self, context_key):
         with self._lock, closing(self._connect()) as connection:
             connection.execute('DELETE FROM calibration_runs WHERE context_key=?', (context_key,))
+            connection.commit()
+
+    def invalidate_scope(self, stable_context_key, *, symbol=None, exchange=None, interval=None, model_id=None, model_revision=None, version=None):
+        with self._lock, closing(self._connect()) as connection:
+            if symbol is None:
+                connection.execute('DELETE FROM calibration_runs WHERE stable_context_key=?', (stable_context_key,))
+            else:
+                connection.execute('''DELETE FROM calibration_runs
+                    WHERE symbol=? AND exchange=? AND interval=? AND model_id=? AND model_revision=? AND calibration_version=?''',
+                    (symbol, exchange, interval, model_id, model_revision, version))
             connection.commit()

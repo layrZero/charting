@@ -23,6 +23,8 @@ if [[ ! -d node_modules ]]; then
 fi
 
 uv sync --project services/timesfm
+echo "Checking TimesFM device capability..."
+uv run --project services/timesfm python services/timesfm/device_diagnostics.py
 
 TIMESFM_ACTION="$(node scripts/timesfm-preflight.mjs)"
 case "$TIMESFM_ACTION" in

@@ -3,22 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from calibration import CalibrationManager, context_key
+from calibration import CALIBRATION_VERSION, CalibrationManager, stable_context_key
 from calibration_store import CalibrationStore
 from forecast_contract import normalize_predictions, validate_bars, validate_request
 from request_manager import RequestManager, StaleAnalyticsRequest
-from runtime import MODEL_ID, TimesFMRuntime
+from runtime import MODEL_ID, MODEL_REVISION, TimesFMRuntime
 
 app = FastAPI(title='Layr0 Charts local TimesFM forecast service', version='2.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=['http://127.0.0.1:5001', 'http://localhost:5001'], allow_methods=['POST'], allow_headers=['Content-Type'])
 _runtime = None
-_lock = Lock()
+_lock = RLock()
 _request_manager = RequestManager()
 _store = CalibrationStore(Path(__file__).parent / 'data' / 'timesfm_calibration.sqlite3')
 _calibration = None
@@ -63,7 +63,7 @@ def calibration_manager():
 @app.get('/health')
 def health():
     active = runtime()
-    return {'status': 'ok', 'model': 'TimesFM-3.0', 'model_id': MODEL_ID, 'model_ready': active.model_ready, 'readiness': active.readiness, 'weights_license': 'non-commercial-development-only', 'local_only': True}
+    return {'status': 'ok', 'model': 'TimesFM-3.0', 'model_id': MODEL_ID, 'model_ready': active.model_ready, 'readiness': active.readiness, 'weights_license': 'non-commercial-development-only', 'local_only': True, **active.device_info}
 
 
 @app.post('/v1/forecast')
@@ -77,8 +77,9 @@ def forecast(request: ForecastRequest):
         request_id = request.request_id or f'{request.symbol}:{request.exchange}:{request.interval}'
         lease = _request_manager.acquire(f'{request.symbol}:{request.exchange}', request_id)
         key = context_key(request.symbol, request.exchange, request.interval, bars)
-        calibration_key = request.calibration_context_key or key
-        stored = _store.get_ready(calibration_key, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
+        scope = stable_context_key(request.symbol, request.exchange, request.interval)
+        calibration_key = request.calibration_context_key or scope
+        stored = _store.get_reusable(stable_context_key=scope, symbol=request.symbol, exchange=request.exchange, interval=request.interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
         offsets = None
         if stored:
             offsets = {name: [stored['offsets'].get(str(index + 1), {}).get(name, 0.0) for index in range(len(timestamps))] for name in ('P10', 'P25', 'P50', 'P75', 'P90')}
@@ -87,7 +88,10 @@ def forecast(request: ForecastRequest):
         response = {'candles': normalize_predictions(result['candles'], timestamps), 'uncertainty': result['uncertainty'], 'generated_at': result.get('generated_at') or datetime.now(timezone.utc).isoformat(), 'model': 'TimesFM-3.0', 'input_fingerprint': fingerprint, 'cache_hit': cache_hit}
         if stored:
             response['uncertainty']['calibration_run_id'] = stored.get('run_id')
-            response['uncertainty']['calibration_context_key'] = calibration_key
+            response['uncertainty']['calibration_context_key'] = stored.get('stable_context_key') or calibration_key
+            response['uncertainty']['calibration_completed_at'] = stored.get('completed_at')
+            response['uncertainty']['calibration_history_bars'] = stored.get('history_bars')
+            response['uncertainty']['calibration_status'] = 'ready'
         return response
     except StaleAnalyticsRequest as error:
         raise HTTPException(status_code=409, detail={'code': 'STALE_FORECAST_REQUEST', 'message': str(error)}) from error
@@ -107,14 +111,15 @@ def start_calibration(request: CalibrationRequest):
         bars = validate_bars(request.bars, max_count=2048)
         if len(bars) < 106:
             raise ValueError('at least 106 completed candles are required for calibration')
-        return calibration_manager().start(symbol=request.symbol, exchange=request.exchange, interval=request.interval, bars=bars, timestamps=request.future_timestamps)
+        started = calibration_manager().start(symbol=request.symbol, exchange=request.exchange, interval=request.interval, bars=bars, timestamps=request.future_timestamps)
+        return started
     except ValueError as error:
         raise HTTPException(status_code=422, detail={'code': 'INVALID_CALIBRATION_REQUEST', 'message': str(error)}) from error
 
 
 @app.get('/v1/calibration/status')
-def calibration_status(context: str):
-    return calibration_manager().status(context) or {'status': 'not-run'}
+def calibration_status(run_id: str | None = None, context: str | None = None):
+    return calibration_manager().status(context, run_id=run_id) or {'status': 'not-run'}
 
 
 @app.post('/v1/calibration/refresh')
@@ -123,8 +128,8 @@ def refresh_calibration(request: CalibrationRequest):
         bars = validate_bars(request.bars, max_count=2048)
         if len(bars) < 106:
             raise ValueError('at least 106 completed candles are required for calibration')
-        key = context_key(request.symbol, request.exchange, request.interval, bars)
-        _store.invalidate(key)
+        scope = stable_context_key(request.symbol, request.exchange, request.interval)
+        _store.invalidate_scope(scope, symbol=request.symbol, exchange=request.exchange, interval=request.interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION)
         return calibration_manager().start(symbol=request.symbol, exchange=request.exchange, interval=request.interval, bars=bars, timestamps=request.future_timestamps)
     except ValueError as error:
         raise HTTPException(status_code=422, detail={'code': 'INVALID_CALIBRATION_REQUEST', 'message': str(error)}) from error

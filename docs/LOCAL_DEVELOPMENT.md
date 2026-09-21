@@ -18,7 +18,7 @@ cp .env.example .env.local
 ./start.sh
 ```
 
-The launcher runs `uv sync`, probes `/health`, reuses a healthy TimesFM process, and starts a new one only when port 8001 is free. It never kills an unknown process. The model checkpoint is downloaded lazily on the first forecast request.
+The launcher runs `uv sync` in the existing `services/timesfm/.venv`, prints GPU/PyTorch diagnostics, probes `/health`, reuses a healthy TimesFM process, and starts a new one only when port 8001 is free. It never kills an unknown process. The CUDA-enabled Torch wheel is large (approximately 1.7 GB for the current Windows build) but is downloaded once and reused from `%LOCALAPPDATA%\\uv\\cache`; the model checkpoint is downloaded lazily on the first forecast request.
 
 Manual service commands:
 
@@ -33,14 +33,18 @@ uv run --project services/timesfm python services/timesfm/app.py
 
 Calibration records are stored in `services/timesfm/data/timesfm_calibration.sqlite3`, keyed by symbol, exchange, interval, exact history fingerprint, model revision, and calibration version. Native and calibrated quantiles are diagnostic ranges, not success probabilities. Forecasts are informational only and cannot place or modify orders.
 
+Calibration uses bounded batches (`TIMESFM_CALIBRATION_BATCH_SIZE`, default 4) and yields between batches so live forecasts remain responsive. CUDA calibration is optional; the runtime falls back to CPU when `TIMESFM_DEVICE=auto` cannot initialize CUDA. Use `uv run --project services/timesfm python services/timesfm/device_diagnostics.py` or inspect `/health` to see the selected device and VRAM. The NVIDIA display driver and system CUDA Toolkit are not installed or modified by the launcher.
+
 ## Verification
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/health
 uv run --project services/timesfm python -m unittest discover -s services/timesfm/tests -v
+
+uv run --project services/timesfm python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 npm test
 npm run lint
 npm run build
 ```
 
-If port 8001 is occupied, use `netstat -ano | findstr :8001` and `tasklist /FI "PID eq <PID>"`. Stop only the process owned by this application. If the model fails to load, check Python dependencies, available memory, Hugging Face access, `TIMESFM_DEVICE`, and the development-only weights license gate.
+If port 8001 is occupied, use `netstat -ano | findstr :8001` and `tasklist /FI "PID eq <PID>"`. Stop only the process owned by this application. If the model fails to load, check Python dependencies, available memory, Hugging Face access, `TIMESFM_DEVICE`, and the development-only weights license gate. If CUDA is unavailable, distinguish the NVIDIA driver, system Toolkit, and PyTorch CUDA build: a Toolkit installation alone does not make CPU-only PyTorch use the GPU.

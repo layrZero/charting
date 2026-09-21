@@ -7,9 +7,17 @@ dependencies = [
   "fastapi==0.115.6",
   "uvicorn[standard]==0.34.0",
   "numpy>=1.26.4",
-  "torch>=2.0.0",
+  "torch==2.10.0",
   "timesfm[torch] @ git+https://github.com/google-research/timesfm.git@v3.0.0",
 ]
 
 [tool.uv]
 package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
