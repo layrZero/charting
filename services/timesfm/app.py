@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from calibration import CALIBRATION_VERSION, CalibrationManager, stable_context_key
+from calibration import CALIBRATION_VERSION, CalibrationManager, context_key, stable_context_key
 from calibration_store import CalibrationStore
 from forecast_contract import normalize_predictions, validate_bars, validate_request
 from request_manager import RequestManager, StaleAnalyticsRequest
