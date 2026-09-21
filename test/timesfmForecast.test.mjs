@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatTimesFMError } from '../src/services/kronosForecast.js';
+import { formatTimesFMError } from '../src/services/timesfmForecast.js';
 
 test('formats structured TimesFM validation errors without object coercion', () => {
   assert.deepEqual(formatTimesFMError({ detail: { code: 'INVALID_FORECAST_REQUEST', message: 'future timestamps are invalid' } }, 422), { code: 'INVALID_FORECAST_REQUEST', message: 'future timestamps are invalid' });

@@ -18,9 +18,9 @@ def validate_request(bars, future_timestamps):
     return clean_bars, timestamps
 
 
-def validate_bars(bars):
-    if not isinstance(bars, list) or not 1 <= len(bars) <= 512:
-        raise ValueError('bars must contain between 1 and 512 completed candles')
+def validate_bars(bars, max_count=512):
+    if not isinstance(bars, list) or not 1 <= len(bars) <= max_count:
+        raise ValueError(f'bars must contain between 1 and {max_count} completed candles')
     clean_bars, previous = [], -1
     for item in bars:
         if not isinstance(item, dict) or any(key not in item for key in REQUIRED):

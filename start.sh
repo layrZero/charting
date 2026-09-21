@@ -22,13 +22,13 @@ if [[ ! -d node_modules ]]; then
   npm install
 fi
 
-uv sync --project services/kronos
+uv sync --project services/timesfm
 
-TIMESFM_ACTION="$(node scripts/kronos-preflight.mjs)"
+TIMESFM_ACTION="$(node scripts/timesfm-preflight.mjs)"
 case "$TIMESFM_ACTION" in
   START)
     echo "TimesFM port is free; starting TimesFM on 127.0.0.1:8001."
-    uv run --project services/kronos python services/kronos/app.py &
+    uv run --project services/timesfm python services/timesfm/app.py &
     TIMESFM_PID=$!
     TIMESFM_OWNED=1
     ;;

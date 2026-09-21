@@ -23,21 +23,21 @@ The launcher runs `uv sync`, probes `/health`, reuses a healthy TimesFM process,
 Manual service commands:
 
 ```powershell
-uv sync --project services/kronos
-uv run --project services/kronos python services/kronos/app.py
+uv sync --project services/timesfm
+uv run --project services/timesfm python services/timesfm/app.py
 ```
 
 ## Forecast contract
 
-`POST /v1/forecast` receives completed OHLCV bars and ten future timestamps. TimesFM 3 forecasts the four OHLC channels and optional volume channel together. The response contains ten forecast candles and native P10/P50/P90 close quantiles. No calibration, HMM, ensemble, or walk-forward request is made.
+`POST /v1/forecast` receives completed OHLCV bars and ten future timestamps. TimesFM 3 forecasts the four OHLC channels and optional volume channel together. The response contains ten forecast candles and native P10/P25/P50/P75/P90 close quantiles. Native output is returned immediately. The frontend then starts or reuses a 32-origin calibration through `/v1/calibration`; status is polled until ready and the matching calibrated lines are displayed.
 
-Native quantile ranges are not success probabilities. Forecasts are informational only and cannot place or modify orders.
+Calibration records are stored in `services/timesfm/data/timesfm_calibration.sqlite3`, keyed by symbol, exchange, interval, exact history fingerprint, model revision, and calibration version. Native and calibrated quantiles are diagnostic ranges, not success probabilities. Forecasts are informational only and cannot place or modify orders.
 
 ## Verification
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/health
-uv run --project services/kronos python -m unittest discover -s services/kronos/tests -v
+uv run --project services/timesfm python -m unittest discover -s services/timesfm/tests -v
 npm test
 npm run lint
 npm run build

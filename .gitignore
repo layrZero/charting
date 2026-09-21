@@ -12,9 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Local-only Kronos checkout and Python runtime artifacts.
-services/kronos/.deps/
-services/kronos/.venv/
+# Local-only TimesFM runtime and Python artifacts.
+services/timesfm/.deps/
+services/timesfm/.venv/
+services/timesfm/data/*.sqlite3
 __pycache__/
 *.py[cod]
 

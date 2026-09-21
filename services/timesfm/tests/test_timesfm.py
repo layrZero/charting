@@ -44,6 +44,9 @@ class TimesFMTests(unittest.TestCase):
         self.assertEqual(len(first['candles']), 10)
         self.assertEqual(first['uncertainty']['quantile_source'], 'timesfm-native')
         self.assertEqual(first['uncertainty']['horizon'][0]['p10'], 99.0)
+        self.assertEqual(set(first['uncertainty']['horizon'][0]['quantiles']), {'P10', 'P25', 'P50', 'P75', 'P90'})
+        self.assertLessEqual(first['uncertainty']['horizon'][0]['p10'], first['uncertainty']['horizon'][0]['p25'])
+        self.assertLessEqual(first['uncertainty']['horizon'][0]['p25'], first['uncertainty']['horizon'][0]['p50'])
         self.assertEqual(first, second)
         self.assertEqual(fake.context.shape, (5, 32))
 

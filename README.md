@@ -25,8 +25,8 @@ The launcher runs TimesFM on `127.0.0.1:8001` and Vite on `localhost:5001`. Re-r
 Manual service startup:
 
 ```powershell
-uv sync --project services/kronos
-uv run --project services/kronos python services/kronos/app.py
+uv sync --project services/timesfm
+uv run --project services/timesfm python services/timesfm/app.py
 ```
 
 Health check:
@@ -37,9 +37,9 @@ Invoke-RestMethod http://127.0.0.1:8001/health
 
 ## TimesFM 3 forecast service
 
-The service uses TimesFM source revision `v3.0.0` and checkpoint `google/timesfm-3.0-pytorch`. It receives normalized completed OHLCV candles and future timestamps only. It returns ten multivariate OHLCV candles plus native TimesFM P10/P50/P90 quantile ranges. It does not receive IMC credentials, place orders, generate signals, or convert LTP ticks into candles.
+The service uses TimesFM source revision `v3.0.0` and checkpoint `google/timesfm-3.0-pytorch`. It receives normalized completed OHLCV candles and future timestamps only. It returns ten multivariate OHLCV candles plus native P10/P25/P50/P75/P90 quantile ranges. It does not receive IMC credentials, place orders, generate signals, or convert LTP ticks into candles.
 
-The local endpoints are `GET /health` and `POST /v1/forecast`. There is no automatic calibration, walk-forward backtest, HMM regime endpoint, or forecast-confidence probability. Native quantile ranges are uncertainty diagnostics, not a probability that a forecast will succeed.
+The local endpoints are `GET /health`, `POST /v1/forecast`, `POST /v1/calibration`, `GET /v1/calibration/status`, and `POST /v1/calibration/refresh`. Native forecasts appear immediately. A local 32-origin walk-forward calibration runs asynchronously per symbol, exchange, interval, and history fingerprint, and is stored in `services/timesfm/data/timesfm_calibration.sqlite3`. Calibrated quantiles replace native display lines after completion. Calibration is historical diagnostic evidence, not a probability that a forecast will succeed.
 
 ## Licensing boundary
 
@@ -55,13 +55,19 @@ TIMESFM_DEVICE=cpu
 TIMESFM_MAX_CONTEXT=512
 TIMESFM_MAX_HORIZON=10
 TIMESFM_ALLOW_NONCOMMERCIAL_WEIGHTS=true
+TIMESFM_CALIBRATION_TTL_HOURS=24
+TIMESFM_CALIBRATION_MIN_NEW_BARS=16
+TIMESFM_CALIBRATION_ORIGINS=32
+TIMESFM_CALIBRATION_VERSION=1
 ```
+
+The chart displays P10, P25, P50, P75, and P90 as separate lines. P50 also supplies the forecast candle median. Calibration is retriggered after the TTL, a material history change, a model/configuration change, or an explicit refresh. The SQLite file is local-only and contains no credentials.
 
 ## Verification
 
 ```powershell
-uv sync --project services/kronos
-uv run --project services/kronos python -m unittest discover -s services/kronos/tests -v
+uv sync --project services/timesfm
+uv run --project services/timesfm python -m unittest discover -s services/timesfm/tests -v
 npm test
 npm run lint
 npm run build

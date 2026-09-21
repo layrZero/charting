@@ -1,0 +1,118 @@
+"""SQLite persistence for local TimesFM quantile calibration."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sqlite3
+from threading import RLock
+from contextlib import closing
+
+
+class CalibrationStore:
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = RLock()
+        with closing(self._connect()) as connection:
+            connection.execute('BEGIN')
+            connection.executescript('''
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS calibration_runs (
+                    run_id TEXT PRIMARY KEY,
+                    context_key TEXT NOT NULL UNIQUE,
+                    symbol TEXT NOT NULL,
+                    exchange TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    history_fingerprint TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    model_revision TEXT NOT NULL,
+                    calibration_version INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    origins INTEGER NOT NULL,
+                    history_bars INTEGER NOT NULL DEFAULT 0,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    error TEXT
+                );
+                CREATE TABLE IF NOT EXISTS calibration_origins (
+                    run_id TEXT NOT NULL,
+                    origin_time INTEGER NOT NULL,
+                    horizon INTEGER NOT NULL,
+                    native_quantiles TEXT NOT NULL,
+                    actual_close REAL NOT NULL,
+                    PRIMARY KEY (run_id, origin_time, horizon),
+                    FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
+                );
+                CREATE TABLE IF NOT EXISTS calibration_results (
+                    run_id TEXT NOT NULL,
+                    horizon INTEGER NOT NULL,
+                    offsets TEXT NOT NULL,
+                    sample_count INTEGER NOT NULL,
+                    coverage TEXT NOT NULL,
+                    PRIMARY KEY (run_id, horizon),
+                    FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
+                );
+            ''')
+            columns = {row[1] for row in connection.execute('PRAGMA table_info(calibration_runs)')}
+            if 'history_bars' not in columns:
+                connection.execute('ALTER TABLE calibration_runs ADD COLUMN history_bars INTEGER NOT NULL DEFAULT 0')
+            connection.commit()
+
+    def _connect(self):
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.execute('PRAGMA busy_timeout=10000')
+        return connection
+
+    @staticmethod
+    def _now():
+        return datetime.now(timezone.utc).isoformat()
+
+    def get_ready(self, context_key, *, ttl_seconds, minimum_new_bars, current_bar_count):
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute('SELECT run_id, completed_at, history_bars FROM calibration_runs WHERE context_key=? AND status=?', (context_key, 'ready')).fetchone()
+            if not row:
+                return None
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(row[1])).total_seconds()
+            except (TypeError, ValueError):
+                return None
+            if age > ttl_seconds or current_bar_count - int(row[2]) >= minimum_new_bars:
+                return None
+            results = connection.execute('SELECT horizon, offsets FROM calibration_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
+            return {'run_id': row[0], 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready'}
+
+    def begin(self, *, run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars):
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute('''INSERT OR REPLACE INTO calibration_runs
+                (run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, status, origins, history_bars, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, self._now()))
+            connection.commit()
+
+    def complete(self, run_id, offsets_by_horizon, coverage_by_horizon, origin_rows):
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute('BEGIN')
+            for origin_time, horizon, quantiles, actual_close in origin_rows:
+                connection.execute('INSERT OR REPLACE INTO calibration_origins VALUES (?, ?, ?, ?, ?)', (run_id, origin_time, horizon, json.dumps(quantiles), actual_close))
+            for horizon, offsets in offsets_by_horizon.items():
+                coverage = coverage_by_horizon.get(horizon, {})
+                connection.execute('INSERT OR REPLACE INTO calibration_results VALUES (?, ?, ?, ?, ?)', (run_id, horizon, json.dumps(offsets), sum(coverage.values()) if coverage else 0, json.dumps(coverage)))
+            connection.execute('UPDATE calibration_runs SET status=?, completed_at=?, error=NULL WHERE run_id=?', ('ready', self._now(), run_id))
+            connection.commit()
+
+    def fail(self, run_id, message):
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute('UPDATE calibration_runs SET status=?, completed_at=?, error=? WHERE run_id=?', ('failed', self._now(), str(message)[:500], run_id))
+            connection.commit()
+
+    def status(self, context_key):
+        with self._lock, self._connect() as connection:
+            row = connection.execute('SELECT run_id, status, origins, started_at, completed_at, error FROM calibration_runs WHERE context_key=? ORDER BY started_at DESC LIMIT 1', (context_key,)).fetchone()
+            if not row:
+                return None
+            return {'run_id': row[0], 'status': row[1], 'total_origins': row[2], 'started_at': row[3], 'completed_at': row[4], 'error': row[5]}
+
+    def invalidate(self, context_key):
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute('DELETE FROM calibration_runs WHERE context_key=?', (context_key,))
+            connection.commit()
