@@ -30,6 +30,7 @@ class CalibrationStore:
                     model_id TEXT NOT NULL,
                     model_revision TEXT NOT NULL,
                     calibration_version INTEGER NOT NULL,
+                    directional_calibration_version INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL,
                     origins INTEGER NOT NULL,
                     history_bars INTEGER NOT NULL DEFAULT 0,
@@ -43,6 +44,9 @@ class CalibrationStore:
                     horizon INTEGER NOT NULL,
                     native_quantiles TEXT NOT NULL,
                     actual_close REAL NOT NULL,
+                    origin_close REAL,
+                    raw_upward_score REAL,
+                    actual_direction TEXT,
                     PRIMARY KEY (run_id, origin_time, horizon),
                     FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
                 );
@@ -55,12 +59,28 @@ class CalibrationStore:
                     PRIMARY KEY (run_id, horizon),
                     FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
                 );
+                CREATE TABLE IF NOT EXISTS calibration_directional_results (
+                    run_id TEXT NOT NULL,
+                    horizon INTEGER NOT NULL,
+                    result TEXT NOT NULL,
+                    PRIMARY KEY (run_id, horizon),
+                    FOREIGN KEY (run_id) REFERENCES calibration_runs(run_id)
+                );
             ''')
             columns = {row[1] for row in connection.execute('PRAGMA table_info(calibration_runs)')}
             if 'history_bars' not in columns:
                 connection.execute('ALTER TABLE calibration_runs ADD COLUMN history_bars INTEGER NOT NULL DEFAULT 0')
             if 'stable_context_key' not in columns:
                 connection.execute('ALTER TABLE calibration_runs ADD COLUMN stable_context_key TEXT')
+            if 'directional_calibration_version' not in columns:
+                connection.execute('ALTER TABLE calibration_runs ADD COLUMN directional_calibration_version INTEGER NOT NULL DEFAULT 0')
+            origin_columns = {row[1] for row in connection.execute('PRAGMA table_info(calibration_origins)')}
+            if 'origin_close' not in origin_columns:
+                connection.execute('ALTER TABLE calibration_origins ADD COLUMN origin_close REAL')
+            if 'raw_upward_score' not in origin_columns:
+                connection.execute('ALTER TABLE calibration_origins ADD COLUMN raw_upward_score REAL')
+            if 'actual_direction' not in origin_columns:
+                connection.execute('ALTER TABLE calibration_origins ADD COLUMN actual_direction TEXT')
             connection.execute('CREATE INDEX IF NOT EXISTS idx_calibration_scope ON calibration_runs (stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, status)')
             connection.commit()
 
@@ -94,7 +114,7 @@ class CalibrationStore:
             results = connection.execute('SELECT horizon, offsets FROM calibration_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
             return {'run_id': row[0], 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready', 'completed_at': row[1], 'history_bars': int(row[2])}
 
-    def get_reusable(self, *, stable_context_key, symbol, exchange, interval, model_id, model_revision, version, ttl_seconds, minimum_new_bars, current_bar_count):
+    def get_reusable(self, *, stable_context_key, symbol, exchange, interval, model_id, model_revision, version, directional_version, ttl_seconds, minimum_new_bars, current_bar_count):
         """Return the newest usable ready result for a stable chart scope.
 
         Older databases did not have stable_context_key; the identifying columns
@@ -103,9 +123,10 @@ class CalibrationStore:
         with self._lock, closing(self._connect()) as connection:
             row = connection.execute('''SELECT run_id, completed_at, history_bars, stable_context_key
                 FROM calibration_runs
-                WHERE status=? AND symbol=? AND exchange=? AND interval=? AND model_id=? AND model_revision=? AND calibration_version=?
+                WHERE status=? AND symbol=? AND exchange=? AND interval=? AND model_id=? AND model_revision=? AND calibration_version=? AND directional_calibration_version=?
                   AND (stable_context_key=? OR stable_context_key IS NULL)
-                ORDER BY completed_at DESC LIMIT 1''', ('ready', symbol, exchange, interval, model_id, model_revision, version, stable_context_key)).fetchone()
+                  AND EXISTS (SELECT 1 FROM calibration_directional_results WHERE calibration_directional_results.run_id=calibration_runs.run_id)
+                ORDER BY completed_at DESC LIMIT 1''', ('ready', symbol, exchange, interval, model_id, model_revision, version, directional_version, stable_context_key)).fetchone()
             if not row:
                 return None
             try:
@@ -115,23 +136,30 @@ class CalibrationStore:
             if age > ttl_seconds or current_bar_count - int(row[2]) >= minimum_new_bars:
                 return None
             results = connection.execute('SELECT horizon, offsets FROM calibration_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
-            return {'run_id': row[0], 'stable_context_key': row[3] or stable_context_key, 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'calibration_status': 'ready', 'completed_at': row[1], 'history_bars': int(row[2])}
+            directional = connection.execute('SELECT horizon, result FROM calibration_directional_results WHERE run_id=? ORDER BY horizon', (row[0],)).fetchall()
+            return {'run_id': row[0], 'stable_context_key': row[3] or stable_context_key, 'offsets': {str(horizon): json.loads(offsets) for horizon, offsets in results}, 'directional': {str(horizon): json.loads(result) for horizon, result in directional}, 'calibration_status': 'ready', 'completed_at': row[1], 'history_bars': int(row[2])}
 
-    def begin(self, *, run_id, context_key, stable_context_key=None, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars):
+    def begin(self, *, run_id, context_key, stable_context_key=None, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, directional_version=0):
         with self._lock, closing(self._connect()) as connection:
             connection.execute('''INSERT OR REPLACE INTO calibration_runs
-                (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, status, origins, history_bars, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, self._now()))
+                (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, directional_calibration_version, status, origins, history_bars, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, directional_version, origins, history_bars, self._now()))
             connection.commit()
 
-    def complete(self, run_id, offsets_by_horizon, coverage_by_horizon, origin_rows):
+    def complete(self, run_id, offsets_by_horizon, coverage_by_horizon, origin_rows, directional_by_horizon=None):
         with self._lock, closing(self._connect()) as connection:
             connection.execute('BEGIN')
-            for origin_time, horizon, quantiles, actual_close in origin_rows:
-                connection.execute('INSERT OR REPLACE INTO calibration_origins VALUES (?, ?, ?, ?, ?)', (run_id, origin_time, horizon, json.dumps(quantiles), actual_close))
+            for row in origin_rows:
+                origin_time, horizon, quantiles, actual_close, *directional_fields = row
+                origin_close, raw_upward_score, actual_direction = (directional_fields + [None, None, None])[:3]
+                connection.execute('''INSERT OR REPLACE INTO calibration_origins
+                    (run_id, origin_time, horizon, native_quantiles, actual_close, origin_close, raw_upward_score, actual_direction)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', (run_id, origin_time, horizon, json.dumps(quantiles), actual_close, origin_close, raw_upward_score, actual_direction))
             for horizon, offsets in offsets_by_horizon.items():
                 coverage = coverage_by_horizon.get(horizon, {})
                 connection.execute('INSERT OR REPLACE INTO calibration_results VALUES (?, ?, ?, ?, ?)', (run_id, horizon, json.dumps(offsets), sum(coverage.values()) if coverage else 0, json.dumps(coverage)))
+            for horizon, result in (directional_by_horizon or {}).items():
+                connection.execute('INSERT OR REPLACE INTO calibration_directional_results VALUES (?, ?, ?)', (run_id, horizon, json.dumps(result)))
             connection.execute('UPDATE calibration_runs SET status=?, completed_at=?, error=NULL WHERE run_id=?', ('ready', self._now(), run_id))
             connection.commit()
 

@@ -9,8 +9,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from calibration import CALIBRATION_VERSION, CalibrationManager, context_key, stable_context_key
+from calibration import CALIBRATION_VERSION, DIRECTIONAL_CALIBRATION_VERSION, CalibrationManager, context_key, stable_context_key
 from calibration_store import CalibrationStore
+from directional_probability import evaluate_directional_probability
 from forecast_contract import normalize_predictions, validate_bars, validate_request
 from request_manager import RequestManager, StaleAnalyticsRequest
 from runtime import MODEL_ID, MODEL_REVISION, TimesFMRuntime
@@ -79,7 +80,7 @@ def forecast(request: ForecastRequest):
         key = context_key(request.symbol, request.exchange, request.interval, bars)
         scope = stable_context_key(request.symbol, request.exchange, request.interval)
         calibration_key = request.calibration_context_key or scope
-        stored = _store.get_reusable(stable_context_key=scope, symbol=request.symbol, exchange=request.exchange, interval=request.interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
+        stored = _store.get_reusable(stable_context_key=scope, symbol=request.symbol, exchange=request.exchange, interval=request.interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, directional_version=DIRECTIONAL_CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
         offsets = None
         if stored:
             offsets = {name: [stored['offsets'].get(str(index + 1), {}).get(name, 0.0) for index in range(len(timestamps))] for name in ('P10', 'P25', 'P50', 'P75', 'P90')}
@@ -92,6 +93,18 @@ def forecast(request: ForecastRequest):
             response['uncertainty']['calibration_completed_at'] = stored.get('completed_at')
             response['uncertainty']['calibration_history_bars'] = stored.get('history_bars')
             response['uncertainty']['calibration_status'] = 'ready'
+            origin_close = float(bars[-1]['close'])
+            directional = {}
+            for horizon, item in enumerate(response['uncertainty']['horizon'], start=1):
+                calibration = stored['directional'].get(str(horizon))
+                if calibration:
+                    native = {name: response['uncertainty']['native_quantiles'][name][horizon - 1] for name in ('P10', 'P25', 'P50', 'P75', 'P90')}
+                    value = evaluate_directional_probability(calibration, native_quantiles=native, displayed_close=item['p50'], origin_close=origin_close)
+                    if value:
+                        value['calibration_run_id'] = stored.get('run_id')
+                        value['calibrated_at'] = stored.get('completed_at')
+                        directional[str(horizon)] = value
+            response['uncertainty']['directional_probability'] = directional
         return response
     except StaleAnalyticsRequest as error:
         raise HTTPException(status_code=409, detail={'code': 'STALE_FORECAST_REQUEST', 'message': str(error)}) from error

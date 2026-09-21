@@ -9,7 +9,7 @@
     "forecast:dev": "uv run --project services/timesfm python services/timesfm/app.py",
     "forecast:test": "uv run --project services/timesfm python -m unittest discover -s services/timesfm/tests -v",
     "build": "vite build",
-    "lint": "eslint src/App.jsx src/components/OpenAlgoTerminal src/services/imcClient.js src/services/imcFeeds.js src/services/workspace.js test",
+    "lint": "eslint src/App.jsx src/components/OpenAlgoTerminal src/services/imcClient.js src/services/imcFeeds.js src/services/orderPayload.js src/services/workspace.js test",
     "preview": "vite preview",
     "test": "node --test test/**/*.test.mjs",
     "signal-receiver": "node scripts/signal-receiver.js"

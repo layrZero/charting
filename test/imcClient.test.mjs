@@ -74,3 +74,22 @@ test('classifies network failures without exposing credentials', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('sends the complete validated order body only to IMC', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ status: 'success', orderid: 'order-1' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const client = new ImcClient({ apiUrl: 'http://127.0.0.1:8080', wsUrl: 'ws://127.0.0.1:8080/ws', apiKey: 'test-key' });
+    await client.placeOrder({ strategy: 'Manual-RPOWER', symbol: 'RPOWER', exchange: 'NSE', action: 'BUY', product: 'MIS', pricetype: 'MARKET', quantity: 1, expected_mode: 'live', expected_balance_type: 'live', expected_mode_version: 7, request_id: 'request-1' });
+    assert.equal(requestBody.strategy, 'Manual-RPOWER');
+    assert.equal(requestBody.expected_mode_version, 7);
+    assert.equal(requestBody.mode_version, undefined);
+    assert.equal(requestBody.apikey, 'test-key');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

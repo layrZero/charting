@@ -41,7 +41,9 @@ The service uses TimesFM source revision `v3.0.0` and checkpoint `google/timesfm
 
 At startup, `TIMESFM_DEVICE=auto` selects CUDA when the installed PyTorch build can initialize the NVIDIA GPU; otherwise it reports a CPU fallback. `/health` exposes the requested and selected device, GPU name, PyTorch CUDA build, and VRAM without credentials. `TIMESFM_REQUIRE_CUDA=true` turns an unavailable CUDA device into a clear startup failure. The CUDA runtime is supplied by the pinned PyTorch wheel; the system CUDA Toolkit is used for diagnostics and is not copied into the repository.
 
-The local endpoints are `GET /health`, `POST /v1/forecast`, `POST /v1/calibration`, `GET /v1/calibration/status`, and `POST /v1/calibration/refresh`. Native forecasts appear immediately. A local 32-origin walk-forward calibration runs asynchronously per symbol, exchange, interval, and history fingerprint, and is stored in `services/timesfm/data/timesfm_calibration.sqlite3`. Calibrated quantiles replace native display lines after completion. Calibration is historical diagnostic evidence, not a probability that a forecast will succeed.
+The local endpoints are `GET /health`, `POST /v1/forecast`, `POST /v1/calibration`, `GET /v1/calibration/status`, and `POST /v1/calibration/refresh`. Native forecasts appear immediately. A local 32-origin walk-forward calibration runs asynchronously per symbol, exchange, interval, and history fingerprint, and is stored in `services/timesfm/data/timesfm_calibration.sqlite3`. Calibrated quantiles replace native display lines after completion.
+
+The completed calibration also reports a directional estimate for H1, H3, H5, and H10. It combines the native quantile distribution with completed historical outcomes for the same symbol, exchange, and interval. The chart shows the estimated direction, a smoothed historical probability, an 80% uncertainty interval, and the evidence count. With the default 32 outcomes this is labelled **low evidence**; it is not a guarantee, investment advice, trade signal, or order input. A numeric percentage is intentionally hidden until directional calibration is ready.
 
 ## Licensing boundary
 
@@ -66,9 +68,14 @@ TIMESFM_CALIBRATION_BATCH_SIZE=4
 TIMESFM_CALIBRATION_MAX_SECONDS=600
 TIMESFM_CALIBRATION_DEVICE=auto
 TIMESFM_CALIBRATION_VERSION=1
+TIMESFM_DIRECTIONAL_CALIBRATION_VERSION=1
 ```
 
 The chart displays P10, P25, P50, P75, and P90 as separate lines. P50 also supplies the forecast candle median. Calibration is retriggered after the TTL, a material history change, a model/configuration change, or an explicit refresh. The SQLite file is local-only and contains no credentials.
+
+## Direct terminal orders
+
+The Order ticket submits one IMC `placeorder` request only after refreshing the current analyzer/live snapshot. A non-empty, user-defined strategy label is mandatory; it is retained locally in the browser and identifies the IMC exposure group used for reconciliation. The terminal sends IMC's current mode preconditions (`expected_mode`, `expected_balance_type`, `expected_mode_version`, and a fresh `request_id`) with every order. It does not retry failed write requests automatically. An IMC submission acknowledgement is not a broker fill confirmation.
 
 ## Verification
 

@@ -9,9 +9,11 @@ from threading import Event, RLock
 import time
 
 from calibration_store import CalibrationStore
+from directional_probability import actual_direction, build_directional_calibration, upward_score
 from runtime import MAX_CONTEXT, MODEL_ID, MODEL_REVISION, TimesFMRuntime, forecast_fingerprint
 
 CALIBRATION_VERSION = int(os.environ.get('TIMESFM_CALIBRATION_VERSION', '1'))
+DIRECTIONAL_CALIBRATION_VERSION = int(os.environ.get('TIMESFM_DIRECTIONAL_CALIBRATION_VERSION', '1'))
 ORIGINS = int(os.environ.get('TIMESFM_CALIBRATION_ORIGINS', '32'))
 BATCH_SIZE = max(1, int(os.environ.get('TIMESFM_CALIBRATION_BATCH_SIZE', '4')))
 MAX_SECONDS = max(1, int(os.environ.get('TIMESFM_CALIBRATION_MAX_SECONDS', '600')))
@@ -20,13 +22,13 @@ HORIZONS = (1, 2, 3, 5, 10)
 
 def context_key(symbol, exchange, interval, bars, model_id=MODEL_ID, model_revision=MODEL_REVISION):
     history_fingerprint = forecast_fingerprint(symbol, exchange, interval, bars, [])
-    payload = {'symbol': symbol, 'exchange': exchange, 'interval': interval, 'history': history_fingerprint, 'model': model_id, 'revision': model_revision, 'version': CALIBRATION_VERSION}
+    payload = {'symbol': symbol, 'exchange': exchange, 'interval': interval, 'history': history_fingerprint, 'model': model_id, 'revision': model_revision, 'version': CALIBRATION_VERSION, 'directional_version': DIRECTIONAL_CALIBRATION_VERSION}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def stable_context_key(symbol, exchange, interval, model_id=MODEL_ID, model_revision=MODEL_REVISION):
     """Identify a calibration scope independently of the latest candle count."""
-    payload = {'symbol': symbol, 'exchange': exchange, 'interval': interval, 'model': model_id, 'revision': model_revision, 'version': CALIBRATION_VERSION}
+    payload = {'symbol': symbol, 'exchange': exchange, 'interval': interval, 'model': model_id, 'revision': model_revision, 'version': CALIBRATION_VERSION, 'directional_version': DIRECTIONAL_CALIBRATION_VERSION}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -43,7 +45,7 @@ class CalibrationManager:
     def start(self, *, symbol, exchange, interval, bars, timestamps):
         key = context_key(symbol, exchange, interval, bars)
         scope = stable_context_key(symbol, exchange, interval)
-        ready = self.store.get_reusable(stable_context_key=scope, symbol=symbol, exchange=exchange, interval=interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
+        ready = self.store.get_reusable(stable_context_key=scope, symbol=symbol, exchange=exchange, interval=interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, directional_version=DIRECTIONAL_CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
         if ready:
             return {'status': 'ready', 'context_key': key, 'stable_context_key': scope, **ready}
         with self._lock:
@@ -54,7 +56,7 @@ class CalibrationManager:
             for old_key, event in list(self._cancel_events.items()):
                 if old_key != scope:
                     event.set()
-            self.store.begin(run_id=run_id, context_key=key, stable_context_key=scope, symbol=symbol, exchange=exchange, interval=interval, history_fingerprint=key, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, origins=ORIGINS, history_bars=len(bars))
+            self.store.begin(run_id=run_id, context_key=key, stable_context_key=scope, symbol=symbol, exchange=exchange, interval=interval, history_fingerprint=key, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, directional_version=DIRECTIONAL_CALIBRATION_VERSION, origins=ORIGINS, history_bars=len(bars))
             cancel_event = Event()
             self._cancel_events[scope] = cancel_event
             self._run_ids[scope] = run_id
@@ -75,6 +77,7 @@ class CalibrationManager:
             return
         errors = {horizon: {name: [] for name in ('P10', 'P25', 'P50', 'P75', 'P90')} for horizon in HORIZONS}
         origin_rows = []
+        directional_samples = {horizon: [] for horizon in (1, 3, 5, 10)}
         for start in range(0, len(origins), BATCH_SIZE):
             if cancel_event.is_set() or time.monotonic() - started > MAX_SECONDS:
                 self.store.fail(run_id, 'calibration cancelled or exceeded the configured time limit')
@@ -99,10 +102,16 @@ class CalibrationManager:
                     quantiles = item['quantiles']
                     for name in errors[horizon]:
                         errors[horizon][name].append(actual - float(quantiles[name]))
-                    origin_rows.append((int(item['timestamp']), horizon, quantiles, actual))
+                    origin_close = float(bars[origin - 1]['close'])
+                    actual_move = actual_direction(actual, origin_close)
+                    raw_upward_score = upward_score(quantiles, origin_close)
+                    origin_rows.append((int(item['timestamp']), horizon, quantiles, actual, origin_close, raw_upward_score, actual_move))
+                    if horizon in directional_samples:
+                        directional_samples[horizon].append({'raw_upward_score': raw_upward_score, 'actual_direction': actual_move})
         offsets = {str(horizon): {name: sum(values) / len(values) for name, values in members.items()} for horizon, members in errors.items()}
         coverage = {horizon: {'P10': len(errors[horizon]['P10'])} for horizon in HORIZONS}
-        self.store.complete(run_id, offsets, coverage, origin_rows)
+        directional = {str(horizon): build_directional_calibration(samples) for horizon, samples in directional_samples.items()}
+        self.store.complete(run_id, offsets, coverage, origin_rows, directional)
 
     def _forecast_batch_adaptive(self, batch, cancel_event, symbol, exchange, interval):
         current = list(batch)
