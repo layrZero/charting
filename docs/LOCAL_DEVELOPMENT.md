@@ -1,109 +1,46 @@
-# Local development and startup
-
-## Prerequisites
-
-Install Node.js 20+, npm, Git, `uv` 0.5+, and Python 3.10+ available through
-`uv`. The application also needs a reachable India Market Connector instance
-and a valid API key. No IMC frontend source is required in this repository.
+# Local development
 
 ## Process topology
 
-```text
-Browser :5001 ── history/options/trading ──> IMC REST/WebSocket
-    │
-    └── completed OHLCV only ──> Kronos API :8001 ──> Kronos-small
-```
+Run IMC separately on its published gateway, then start the Charts frontend and local TimesFM service. The browser uses IMC at `http://127.0.0.1:8080` and TimesFM at `http://127.0.0.1:8001`. IMC credentials are entered in the browser and never sent to TimesFM.
 
-The browser sends no IMC credentials to Kronos. The Kronos service is local-only
-on this branch. With the current IMC Docker development stack, the browser
-must use the published gateway at `http://127.0.0.1:8080` and
-`ws://127.0.0.1:8080/ws`; IMC's `5000` and `8765` ports are internal to the
-Docker network.
+## Startup
 
-## First startup
-
-From the repository root on Windows:
-
-```bat
+```powershell
 npm install
 copy .env.example .env.local
 start.bat
 ```
 
-From Bash, Git Bash, Linux, or macOS:
-
 ```bash
 npm install
 cp .env.example .env.local
-bash start.sh
+./start.sh
 ```
 
-Both launchers validate `uv`, Node, npm, and Git; run `uv sync`; bootstrap the
-pinned Kronos commit; and start Vite plus the signal receiver on port `5001`.
-Before launching Kronos, they probe `127.0.0.1:8001/health`. A free port starts
-one Kronos process; a healthy existing Kronos service is reused; an occupied
-port belonging to another service causes a safe failure. The launchers never
-kill an unknown process.
+The launcher runs `uv sync`, probes `/health`, reuses a healthy TimesFM process, and starts a new one only when port 8001 is free. It never kills an unknown process. The model checkpoint is downloaded lazily on the first forecast request.
 
-## Manual startup
+Manual service commands:
 
-Kronos terminal:
-
-```bash
+```powershell
 uv sync --project services/kronos
-uv run --project services/kronos python services/kronos/bootstrap.py
 uv run --project services/kronos python services/kronos/app.py
 ```
 
-Charts terminal:
+## Forecast contract
 
-```bash
-npm run dev
-```
+`POST /v1/forecast` receives completed OHLCV bars and ten future timestamps. TimesFM 3 forecasts the four OHLC channels and optional volume channel together. The response contains ten forecast candles and native P10/P50/P90 close quantiles. No calibration, HMM, ensemble, or walk-forward request is made.
 
-Use `http://127.0.0.1:8001/health` to check Kronos,
-`http://localhost:5001` to open Charts, and
-`http://127.0.0.1:8080/` to check the IMC gateway. Enter the following IMC
-settings in the application for the Docker development stack:
+Native quantile ranges are not success probabilities. Forecasts are informational only and cannot place or modify orders.
 
-```text
-REST URL:      http://127.0.0.1:8080
-WebSocket URL: ws://127.0.0.1:8080/ws
-```
+## Verification
 
-The connection resolver gives browser-saved settings precedence over Vite
-environment variables. It migrates only the old local `5000`/`8765` defaults;
-custom remote endpoints are preserved.
-
-## Development commands
-
-```bash
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/health
 uv run --project services/kronos python -m unittest discover -s services/kronos/tests -v
 npm test
 npm run lint
 npm run build
 ```
 
-`uv.lock` is the Python dependency source of truth. Do not use `pip install`
-for this service. npm remains the dependency manager for the Vite application.
-
-## Shutdown and troubleshooting
-
-Press `Ctrl+C` in Bash. On Windows, close the frontend terminal and, when this
-invocation started Kronos, the separate `Layr0 Kronos` window. If the launcher
-reused Kronos, leave that existing service running or stop it separately.
-If startup fails, check the following:
-
-- `uv` missing: install `uv` and reopen the terminal.
-- Bootstrap failure: verify GitHub access and rerun the bootstrap command.
-- Port conflict: for port 8001 run `netstat -ano | findstr :8001`, then
-  `tasklist /FI "PID eq <PID>"`. A healthy local Kronos service is reused; an
-  unrelated owner must be stopped by its owning workflow. Apply the same check
-  to port 5001 if Vite cannot start.
-- Forecast unavailable: confirm the Kronos process is healthy on port 8001.
-- No chart data: confirm IMC is running, use the published `8080` gateway
-  rather than container-internal ports `5000`/`8765`, and inspect the displayed
-  IMC error code. `INVALID_API_KEY` or `MISSING_API_KEY` is an authentication
-  response; `IMC_NETWORK_OR_CORS_ERROR` means the browser could not reach the
-  configured endpoint or the response was blocked by browser policy.
-- Slow first forecast: the model is being downloaded and cached locally.
+If port 8001 is occupied, use `netstat -ano | findstr :8001` and `tasklist /FI "PID eq <PID>"`. Stop only the process owned by this application. If the model fails to load, check Python dependencies, available memory, Hugging Face access, `TIMESFM_DEVICE`, and the development-only weights license gate.

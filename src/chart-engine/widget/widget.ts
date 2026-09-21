@@ -536,11 +536,11 @@ class WidgetImpl implements Widget {
     this._topbar?.refresh();
     this._mobile?.refresh();
     this._scheduleSave();
-    if (this._opts.feed) void this.reload();
-    // Listeners last, so a host's own bug in one cannot leave the shell
-    // half-updated. A link group listens for the same fact on the chart's bus.
+    // Notify listeners before a new data lifecycle starts. Hosts can cancel
+    // symbol-scoped work and clear derived series before the replacement load.
     this._bus.emit('symbol', { symbol: s, exchange: ex });
     this.chart.emit('symbol', { symbol: s, exchange: ex });
+    if (this._opts.feed) void this.reload();
   }
 
   public setInterval(code: string): void {
@@ -559,8 +559,8 @@ class WidgetImpl implements Widget {
     this._topbar?.refresh();
     this._mobile?.refresh();
     this._scheduleSave();
-    if (this._opts.feed) void this.reload();
     this._bus.emit('interval', { interval: c });
+    if (this._opts.feed) void this.reload();
   }
 
   public setChartType(id: string): void {

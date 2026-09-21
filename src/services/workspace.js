@@ -1,4 +1,4 @@
 const KEY = 'layr0_openalgo_workspace_v2';
-export const defaultWorkspace = { version: 2, active: { symbol: 'NIFTY', exchange: 'NSE_INDEX', interval: '5m' }, theme: 'dark', panels: { optionChain: true, trading: true }, forecast: { mode: 'rolling-10' }, updatedAt: null };
-export const loadWorkspace = () => { try { return { ...defaultWorkspace, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return defaultWorkspace; } };
-export const saveWorkspace = (workspace) => localStorage.setItem(KEY, JSON.stringify({ ...workspace, version: 2, updatedAt: new Date().toISOString() }));
+export const defaultWorkspace = { version: 5, active: { symbol: 'NIFTY', exchange: 'NSE_INDEX', interval: '5m' }, theme: 'dark', panels: { optionChain: true, trading: true }, forecast: { mode: 'rolling-10', diagnosticsVisible: true, uncertaintyVisible: true }, updatedAt: null };
+export const loadWorkspace = () => { try { const saved = JSON.parse(localStorage.getItem(KEY) || '{}'); return { ...defaultWorkspace, ...saved, active: { ...defaultWorkspace.active, ...(saved.active || {}) }, panels: { ...defaultWorkspace.panels, ...(saved.panels || {}) }, forecast: { ...defaultWorkspace.forecast, ...(saved.forecast || {}) }, version: 5 }; } catch { return defaultWorkspace; } };
+export const saveWorkspace = (workspace) => localStorage.setItem(KEY, JSON.stringify({ ...workspace, version: 5, updatedAt: new Date().toISOString() }));

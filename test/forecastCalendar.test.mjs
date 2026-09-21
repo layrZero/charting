@@ -37,3 +37,15 @@ test('continues with default calendar rules when IMC calendar calls fail', async
   assert.deepEqual(calendar.session, {});
   assert.equal(calendar.holidays.size, 0);
 });
+
+test('forwards an abort signal to all calendar requests', async () => {
+  const controller = new AbortController();
+  const signals = [];
+  const client = {
+    marketTimings: async (_date, options) => { signals.push(options.signal); return { data: [] }; },
+    marketHolidays: async (_year, options) => { signals.push(options.signal); return { data: [] }; },
+  };
+  await loadForecastCalendar(client, 1760000000, 'NSE_INDEX', { signal: controller.signal });
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every((signal) => signal === controller.signal));
+});

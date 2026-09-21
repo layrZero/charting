@@ -1,38 +1,14 @@
 # Architecture
 
-Layr0 Charts has three boundaries: the React/Vite terminal shell owns layout,
-workspace and panels; the internal Layer Zero chart engine owns canvas
-rendering, drawings, indicators and touch chart controls; IMC owns market
-data, options, execution mode, orders and investment data.
+```text
+Browser / React terminal :5001
+  ├─ IMC REST/WebSocket ──> published IMC gateway :8080
+  └─ completed OHLCV only ──> local TimesFM service :8001
+                                  └─ TimesFM 3.0 native quantiles
+```
 
-`ImcClient` owns REST contracts. `ImcMarketDataFeed` converts IMC history and
-WebSocket data to chart-engine feeds. `ImcTradeAdapter` is the basic trade bridge;
-extended actions remain explicit IMC client calls so mode preconditions are not
-lost.
+The Charts application is independent of the IMC frontend. IMC remains authoritative for actual candles, options, quotes, portfolio data, and all order mutations. The local forecast service is read-only and never receives credentials or creates orders.
 
-Included scope is charting, options, trading and portfolio APIs. Broker setup,
-operations dashboards, logs, monitoring, licensing and other IMC admin
-surfaces are excluded. Desktop uses concurrent panels; tablet stacks panels;
-phones provide one full-height panel selected from the tab bar.
+The forecast service exposes only `/health` and `/v1/forecast`. Its source is pinned to TimesFM `v3.0.0`; its default checkpoint is `google/timesfm-3.0-pytorch`. The runtime maps completed OHLCV channels to TimesFM’s multivariate input and maps native deciles to P10/P50/P90. Forecast candles remain separate chart-engine series.
 
-The internal engine source is in `src/chart-engine`. Vite aliases expose only
-`@layr0/chart-engine` and its tiers; no application code imports an external
-chart package.
-
-## Kronos local forecast extension
-
-`services/kronos` is a local Python inference process, separate from the
-browser application and India Market Connector. The browser obtains its market
-history directly from IMC, filters completed bars, creates the next ten
-exchange-session timestamps from IMC calendar data, and posts only normalized
-OHLCV bars to `POST /v1/forecast`. The service has no IMC credential, order,
-portfolio, or broker integration and is intentionally local-only.
-
-For local development, `start.sh` and `start.bat` run `uv sync`, bootstrap the
-pinned Kronos checkout, preflight port 8001, and start the Kronos API only when
-no healthy instance is already running. They then start the Vite application
-plus signal receiver on port 5001. See `docs/LOCAL_DEVELOPMENT.md`.
-
-The copied built-in indicator sources are an opt-in engine tier. The frontend
-bootstrap registers the complete tier once before rendering React, so the chart
-indicator picker and chart widgets share the same Layer Zero registry.
+Calibration, HMM regime analysis, ensemble sampling, and walk-forward jobs are not part of this architecture. Native quantiles are uncertainty diagnostics, not calibrated probabilities. The default TimesFM 3 weights are development-only under their current license.

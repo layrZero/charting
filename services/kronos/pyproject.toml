@@ -1,17 +1,14 @@
 [project]
-name = "layr0-kronos-service"
-version = "0.1.0"
-description = "Local Kronos forecast API for Layr0 Charts"
+name = "layr0-timesfm-service"
+version = "2.0.0"
+description = "Local TimesFM 3 forecast API for Layr0 Charts development"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi==0.115.6",
   "uvicorn[standard]==0.34.0",
-  "numpy",
-  "pandas==2.2.2",
+  "numpy>=1.26.4",
   "torch>=2.0.0",
-  "einops==0.8.1",
-  "huggingface_hub==0.33.1",
-  "safetensors==0.6.2",
+  "timesfm[torch] @ git+https://github.com/google-research/timesfm.git@v3.0.0",
 ]
 
 [tool.uv]

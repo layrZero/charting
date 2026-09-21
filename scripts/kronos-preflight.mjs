@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 
 const host = '127.0.0.1';
-const port = Number(process.env.KRONOS_PORT || 8001);
+const port = Number(process.env.FORECAST_PORT || 8001);
 const timeoutMs = 1200;
 
 function probePort() {
@@ -32,7 +32,7 @@ function probeHealth() {
       response.on('end', () => {
         try {
           const payload = JSON.parse(body);
-          resolve(response.statusCode >= 200 && response.statusCode < 300 && payload.status === 'ok' && payload.local_only === true);
+        resolve(response.statusCode >= 200 && response.statusCode < 300 && payload.status === 'ok' && payload.local_only === true && payload.model === 'TimesFM-3.0');
         } catch {
           resolve(false);
         }
@@ -54,6 +54,6 @@ if (await probeHealth()) {
   process.exit(0);
 }
 
-console.error(`Port ${port} is occupied, but ${host}:${port}/health is not a healthy local Kronos service.`);
-console.error('Stop the owning process or choose another Kronos port; no process was terminated automatically.');
+console.error(`Port ${port} is occupied, but ${host}:${port}/health is not a healthy local TimesFM service.`);
+console.error('Stop the owning process or choose another forecast port; no process was terminated automatically.');
 process.exit(2);

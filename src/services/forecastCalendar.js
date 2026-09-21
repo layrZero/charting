@@ -81,13 +81,13 @@ export const completedBars = (bars, interval, now = Math.floor(Date.now() / 1000
 
 const calendarExchange = (exchange) => ({ NSE_INDEX: 'NSE', BSE_INDEX: 'BSE', NFO: 'NSE', BFO: 'BSE' }[exchange] || exchange);
 
-export const loadForecastCalendar = async (client, lastTime, exchange) => {
+export const loadForecastCalendar = async (client, lastTime, exchange, { signal } = {}) => {
   const year = istDate(lastTime).getUTCFullYear();
   const date = isoDate(istDate(lastTime));
   const results = await Promise.allSettled([
-    client.marketTimings(date),
-    client.marketHolidays(year),
-    client.marketHolidays(year + 1),
+    client.marketTimings(date, { signal }),
+    client.marketHolidays(year, { signal }),
+    client.marketHolidays(year + 1, { signal }),
   ]);
   const [timingsResult, holidaysResult, nextHolidaysResult] = results;
   const currentTimings = timingsResult.status === 'fulfilled' ? timingsResult.value : null;

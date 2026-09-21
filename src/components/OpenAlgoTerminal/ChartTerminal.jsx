@@ -1,81 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
 import { createWidget } from '@layr0/chart-engine/widget';
 import { ImcMarketDataFeed } from '../../services/imcFeeds';
-import { completedBars, intervalSeconds, loadForecastCalendar, nextForecastTimes } from '../../services/forecastCalendar';
-import { requestKronosForecast } from '../../services/kronosForecast';
-import { forecastRequestKey } from '../../services/forecastIdentity';
+import { completedBars, loadForecastCalendar, nextForecastTimes } from '../../services/forecastCalendar';
+import { requestTimesFMForecast } from '../../services/kronosForecast';
+import { forecastRequestKey, forecastRequestId } from '../../services/forecastIdentity';
+import { AUTHORITATIVE_REFRESH_INTERVAL_MS } from '../../services/refreshPolicy';
 
 const intervals = ['1m', '5m', '15m', '1h', '1d', '1w'];
-const settlementDelayMs = 5_000;
-const futureStyle = { title: 'Kronos forecast', upColor: 'rgba(139, 92, 246, 0.72)', downColor: 'rgba(245, 158, 11, 0.72)', borderUpColor: '#a78bfa', borderDownColor: '#fbbf24', wickUpColor: '#a78bfa', wickDownColor: '#fbbf24', priceLineVisible: false, lastValueVisible: false };
-const fulfilledStyle = { title: 'Kronos fulfilled forecast', upColor: '#a78bfa', downColor: '#fbbf24', borderUpColor: '#a78bfa', borderDownColor: '#fbbf24', wickUpColor: '#a78bfa', wickDownColor: '#fbbf24', bodyVisible: false, priceLineVisible: false, lastValueVisible: false };
+const futureStyle = { title: 'TimesFM forecast', upColor: 'rgba(139, 92, 246, 0.72)', downColor: 'rgba(245, 158, 11, 0.72)', borderUpColor: '#a78bfa', borderDownColor: '#fbbf24', wickUpColor: '#a78bfa', wickDownColor: '#fbbf24', priceLineVisible: false, lastValueVisible: false };
+const fulfilledStyle = { title: 'TimesFM fulfilled forecast', upColor: '#a78bfa', downColor: '#fbbf24', borderUpColor: '#a78bfa', borderDownColor: '#fbbf24', wickUpColor: '#a78bfa', wickDownColor: '#fbbf24', bodyVisible: false, priceLineVisible: false, lastValueVisible: false };
+const uncertaintyStyle = { color: 'rgba(167, 139, 250, 0.65)', lineWidth: 1, lineStyle: 'dashed', priceLineVisible: false, lastValueVisible: false };
 
-export default function ChartTerminal({ client, active, onActiveChange, theme, forecastMode }) {
-  const host = useRef(null); const widget = useRef(null); const mode = useRef(forecastMode); const abort = useRef(null); const timer = useRef(null); const forecastByTime = useRef(new Map()); const fulfilledByTime = useRef(new Map()); const generation = useRef(0); const lastRequestKey = useRef(''); const inFlightRequests = useRef(new Map());
+export default function ChartTerminal({ client, active, onActiveChange, theme, forecastMode, forecastDiagnosticsVisible = true, forecastUncertaintyVisible = true, onForecastUncertaintyVisible }) {
+  const host = useRef(null); const widget = useRef(null); const mode = useRef(forecastMode); const abort = useRef(null); const forecastByTime = useRef(new Map()); const fulfilledByTime = useRef(new Map()); const generation = useRef(0); const transition = useRef(0); const lastRequestKey = useRef(''); const pendingHistoryKey = useRef('');
   const initial = useRef({ symbol: active.symbol, exchange: active.exchange, interval: active.interval, theme }); const callbacks = useRef({ client, onActiveChange });
-  const [error, setError] = useState(''); const [forecast, setForecast] = useState({ status: 'Waiting for broker history', generatedAt: null, count: 0 });
+  const [error, setError] = useState(''); const [forecast, setForecast] = useState({ status: 'Waiting for broker history', generatedAt: null, count: 0, uncertainty: null }); const uncertaintyVisible = useRef(forecastUncertaintyVisible); const lowerSeriesRef = useRef(null); const upperSeriesRef = useRef(null);
+  useEffect(() => { mode.current = forecastMode; }, [forecastMode]); useEffect(() => { uncertaintyVisible.current = forecastUncertaintyVisible; }, [forecastUncertaintyVisible]); useEffect(() => { callbacks.current = { client, onActiveChange }; }, [client, onActiveChange]);
 
-  useEffect(() => { mode.current = forecastMode; }, [forecastMode]);
-  useEffect(() => { callbacks.current = { client, onActiveChange }; }, [client, onActiveChange]);
-  // The widget is deliberately mounted once; later active-symbol changes use its public API below.
   useEffect(() => { try {
     const feed = new ImcMarketDataFeed(callbacks.current.client);
-    const createdWidget = createWidget(host.current, { feed, symbol: initial.current.symbol, exchange: initial.current.exchange, interval: initial.current.interval, intervals, theme: initial.current.theme, persist: false, mobile: 'auto', lookbackBars: 400, symbolSearch: async (query) => { const result = await callbacks.current.client.search(query); return (result.data || result.symbols || []).map((item) => ({ symbol: item.symbol, exchange: item.exchange })); }, onOrder: () => document.querySelector('.trading-panel')?.scrollIntoView({ behavior: 'smooth' }) });
+    const createdWidget = createWidget(host.current, { feed, symbol: initial.current.symbol, exchange: initial.current.exchange, interval: initial.current.interval, intervals, theme: initial.current.theme, persist: false, mobile: 'auto', lookbackBars: 400, loading: { pollIntervalMs: AUTHORITATIVE_REFRESH_INTERVAL_MS }, symbolSearch: async (query) => { const result = await callbacks.current.client.search(query); return (result.data || result.symbols || []).map((item) => ({ symbol: item.symbol, exchange: item.exchange })); }, onOrder: () => document.querySelector('.trading-panel')?.scrollIntoView({ behavior: 'smooth' }) });
     widget.current = createdWidget;
-    const futureSeries = createdWidget.chart.addSeries('candlestick', { style: futureStyle });
-    const fulfilledSeries = createdWidget.chart.addSeries('candlestick', { style: fulfilledStyle });
-    const clearForecast = () => { futureSeries.setData([]); fulfilledSeries.setData([]); forecastByTime.current.clear(); fulfilledByTime.current.clear(); lastRequestKey.current = ''; };
-    const scheduleRefresh = (nextTime) => { clearTimeout(timer.current); const delay = Math.max(settlementDelayMs, nextTime * 1000 + settlementDelayMs - Date.now()); timer.current = setTimeout(() => { if (!createdWidget.isDestroyed) void createdWidget.reload(); }, delay); };
+    const futureSeries = createdWidget.chart.addSeries('candlestick', { style: futureStyle }); const fulfilledSeries = createdWidget.chart.addSeries('candlestick', { style: fulfilledStyle }); const lowerSeries = createdWidget.chart.addSeries('line', { style: uncertaintyStyle }); const upperSeries = createdWidget.chart.addSeries('line', { style: uncertaintyStyle }); lowerSeriesRef.current = lowerSeries; upperSeriesRef.current = upperSeries;
+    const clearForecast = (status = 'Waiting for broker history') => { abort.current?.abort(); abort.current = null; pendingHistoryKey.current = ''; futureSeries.setData([]); fulfilledSeries.setData([]); lowerSeries.setData([]); upperSeries.setData([]); forecastByTime.current.clear(); fulfilledByTime.current.clear(); lastRequestKey.current = ''; setForecast({ status, generatedAt: null, count: 0, uncertainty: null }); };
+    const beginTransition = (interval) => { transition.current += 1; generation.current += 1; createdWidget.series.setData([]); clearForecast(`Loading ${interval} history`); };
     const runForecast = async () => {
-      const bars = completedBars(createdWidget.series.getData(), createdWidget.interval());
-      if (bars.length === 0) { clearForecast(); setForecast({ status: 'Waiting for a completed broker candle', generatedAt: null, count: 0 }); return; }
-      for (const actual of bars) { const predicted = forecastByTime.current.get(actual.time); if (predicted) fulfilledByTime.current.set(actual.time, predicted); }
-      if (mode.current === 'rolling-10') fulfilledByTime.current.clear();
-      setForecast({ status: 'Forecasting ten candles…', generatedAt: null, count: 0 }); setError('');
-      let requestPromise;
-      let requestId = null;
+      const transitionId = transition.current; const symbol = createdWidget.symbol(); const exchange = createdWidget.exchange(); const interval = createdWidget.interval(); const bars = completedBars(createdWidget.series.getData(), interval); if (bars.length === 0) { clearForecast(`Loading ${interval} history`); return; }
+      for (const actual of bars) { const predicted = forecastByTime.current.get(actual.time); if (predicted) fulfilledByTime.current.set(actual.time, predicted); } if (mode.current === 'rolling-10') fulfilledByTime.current.clear();
+      const history = bars.slice(-512).map(({ time, open, high, low, close, volume }) => ({ time, open, high, low, close, volume })); const pendingKey = JSON.stringify({ symbol, exchange, interval, history }); if (pendingHistoryKey.current === pendingKey) return; pendingHistoryKey.current = pendingKey;
+      setForecast((previous) => ({ ...previous, status: `Forecasting ${interval} with TimesFM…` })); setError('');
+      let requestKey; const requestId = ++generation.current; const controller = new AbortController(); abort.current?.abort(); abort.current = controller;
       try {
-        const history = bars.slice(-512).map(({ time, open, high, low, close, volume }) => ({ time, open, high, low, close, volume }));
-        const calendar = await loadForecastCalendar(callbacks.current.client, history.at(-1).time, createdWidget.exchange());
-        const futureTimestamps = nextForecastTimes({ lastTime: history.at(-1).time, interval: createdWidget.interval(), ...calendar });
-        const requestKey = forecastRequestKey({ symbol: createdWidget.symbol(), exchange: createdWidget.exchange(), interval: createdWidget.interval(), bars: history, futureTimestamps });
-        if (lastRequestKey.current === requestKey && forecastByTime.current.size === 10) return;
-        if (inFlightRequests.current.has(requestKey)) return;
-        requestId = ++generation.current;
-        abort.current?.abort(); abort.current = new AbortController();
-        const requestPromise = requestKronosForecast({ symbol: createdWidget.symbol(), exchange: createdWidget.exchange(), interval: createdWidget.interval(), bars: history, futureTimestamps, signal: abort.current.signal });
-        inFlightRequests.current.set(requestKey, requestPromise);
-        const result = await requestPromise;
-        if (requestId !== generation.current || createdWidget.isDestroyed) return;
-        const candles = result.candles.map((candle) => ({ time: Number(candle.time), open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close), volume: Number(candle.volume || 0) }));
-        forecastByTime.current = new Map(candles.map((candle) => [candle.time, candle])); futureSeries.setData(candles);
-        fulfilledSeries.setData(mode.current === 'retain-fulfilled-overlays' ? [...fulfilledByTime.current.values()] : []);
-        lastRequestKey.current = requestKey;
-        setForecast({ status: 'Kronos forecast — not trading advice', generatedAt: result.generated_at || new Date().toISOString(), count: candles.length }); scheduleRefresh(futureTimestamps[0] + intervalSeconds(createdWidget.interval()));
-      } catch (caught) {
-        if (caught.name === 'AbortError' || requestId !== generation.current) return;
-        futureSeries.setData([]);
-        const statusByCode = {
-          INVALID_FORECAST_REQUEST: 'Forecast request invalid',
-          INVALID_FORECAST_RESPONSE: 'Forecast response invalid',
-          KRONOS_RUNTIME_UNAVAILABLE: 'Kronos model unavailable',
-          KRONOS_INFERENCE_FAILED: 'Kronos inference failed',
-          KRONOS_SERVICE_UNAVAILABLE: 'Kronos service unavailable',
-          KRONOS_NETWORK_ERROR: 'Kronos service unavailable',
-        };
-        setError(caught.message || 'Kronos forecast unavailable.');
-        setForecast({ status: statusByCode[caught.code] || 'Forecast unavailable', generatedAt: null, count: 0 });
-      } finally {
-        for (const [key, promise] of inFlightRequests.current) if (promise === requestPromise) inFlightRequests.current.delete(key);
-      }
+        const calendar = await loadForecastCalendar(callbacks.current.client, history.at(-1).time, exchange, { signal: controller.signal }); if (controller.signal.aborted || transitionId !== transition.current || requestId !== generation.current) return;
+        const futureTimestamps = nextForecastTimes({ lastTime: history.at(-1).time, interval, ...calendar }); requestKey = forecastRequestKey({ symbol, exchange, interval, bars: history, futureTimestamps }); const compactRequestId = forecastRequestId(requestKey); if (lastRequestKey.current === requestKey && forecastByTime.current.size === 10) return;
+        const result = await requestTimesFMForecast({ symbol, exchange, interval, bars: history, futureTimestamps, requestId: compactRequestId, signal: controller.signal }); if (requestId !== generation.current || transitionId !== transition.current || controller.signal.aborted || createdWidget.isDestroyed) return;
+        const candles = result.candles.map((candle) => ({ time: Number(candle.time), open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close), volume: Number(candle.volume || 0) })); forecastByTime.current = new Map(candles.map((candle) => [candle.time, candle])); futureSeries.setData(candles); const horizon = result.uncertainty.horizon; lowerSeries.setData(uncertaintyVisible.current ? horizon.map((item) => ({ time: Number(item.timestamp), value: Number(item.p10) })) : []); upperSeries.setData(uncertaintyVisible.current ? horizon.map((item) => ({ time: Number(item.timestamp), value: Number(item.p90) })) : []); fulfilledSeries.setData(mode.current === 'retain-fulfilled-overlays' ? [...fulfilledByTime.current.values()] : []); lastRequestKey.current = requestKey; setForecast({ status: 'TimesFM 3 forecast — not trading advice', generatedAt: result.generated_at || new Date().toISOString(), count: candles.length, uncertainty: result.uncertainty });
+      } catch (caught) { if (caught.name === 'AbortError' || requestId !== generation.current || transitionId !== transition.current) return; setError(caught.message || 'TimesFM forecast unavailable.'); setForecast((previous) => ({ ...previous, status: 'Forecast unavailable' })); } finally { if (requestId === generation.current && lastRequestKey.current !== requestKey) pendingHistoryKey.current = ''; if (abort.current === controller) abort.current = null; }
     };
-    const offSymbol = createdWidget.on('symbol', ({ symbol, exchange }) => { clearForecast(); callbacks.current.onActiveChange({ symbol, exchange }); });
-    const offInterval = createdWidget.on('interval', ({ interval }) => { clearForecast(); callbacks.current.onActiveChange({ interval }); });
-    const offData = createdWidget.on('data', () => { void runForecast(); });
-    return () => { abort.current?.abort(); clearTimeout(timer.current); offSymbol(); offInterval(); offData(); futureSeries.remove(); fulfilledSeries.remove(); createdWidget.destroy(); if (widget.current === createdWidget) widget.current = null; };
+    const offSymbol = createdWidget.on('symbol', ({ symbol, exchange }) => { beginTransition(createdWidget.interval()); callbacks.current.onActiveChange({ symbol, exchange }); }); const offInterval = createdWidget.on('interval', ({ interval }) => { beginTransition(interval); callbacks.current.onActiveChange({ interval }); }); const offData = createdWidget.on('data', () => { void runForecast(); });
+    return () => { abort.current?.abort(); offSymbol(); offInterval(); offData(); futureSeries.remove(); fulfilledSeries.remove(); lowerSeries.remove(); upperSeries.remove(); lowerSeriesRef.current = null; upperSeriesRef.current = null; createdWidget.destroy(); if (widget.current === createdWidget) widget.current = null; };
   } catch (caught) { setTimeout(() => setError(caught.message || 'Unable to start the chart.'), 0); } }, []);
-  useEffect(() => { if (widget.current && (widget.current.symbol() !== active.symbol || widget.current.exchange() !== active.exchange)) widget.current.setSymbol(active.symbol, active.exchange); }, [active.symbol, active.exchange]);
-  useEffect(() => { if (widget.current && widget.current.interval() !== active.interval) widget.current.setInterval(active.interval); }, [active.interval]);
-  useEffect(() => { if (widget.current && mode.current === 'rolling-10') fulfilledByTime.current.clear(); }, [forecastMode]);
-  return <div className="chart-terminal"><div className="chart-context"><b>{active.symbol}</b><span>{active.exchange}</span><select value={active.interval} onChange={(e) => onActiveChange({ interval: e.target.value })}>{intervals.map((item) => <option key={item}>{item}</option>)}</select></div><div className="forecast-status" role="status"><b>{forecast.status}</b>{forecast.count > 0 && <span>{forecast.count} forward candles</span>}{forecast.generatedAt && <time dateTime={forecast.generatedAt}>Updated {new Date(forecast.generatedAt).toLocaleTimeString()}</time>}</div>{error && <p className="error">{error}</p>}<div ref={host} className="openalgo-host" /></div>;
+
+  useEffect(() => { if (widget.current && (widget.current.symbol() !== active.symbol || widget.current.exchange() !== active.exchange)) widget.current.setSymbol(active.symbol, active.exchange); }, [active.symbol, active.exchange]); useEffect(() => { if (widget.current && widget.current.interval() !== active.interval) widget.current.setInterval(active.interval); }, [active.interval]); useEffect(() => { if (mode.current === 'rolling-10') fulfilledByTime.current.clear(); }, [forecastMode]); useEffect(() => { const horizon = forecast.uncertainty?.horizon || []; lowerSeriesRef.current?.setData(uncertaintyVisible.current ? horizon.map((item) => ({ time: Number(item.timestamp), value: Number(item.p10) })) : []); upperSeriesRef.current?.setData(uncertaintyVisible.current ? horizon.map((item) => ({ time: Number(item.timestamp), value: Number(item.p90) })) : []); }, [forecast.uncertainty, forecastUncertaintyVisible]);
+  return <div className="chart-terminal"><div className="chart-context"><b>{active.symbol}</b><span>{active.exchange}</span><select value={active.interval} onChange={(e) => onActiveChange({ interval: e.target.value })}>{intervals.map((item) => <option key={item}>{item}</option>)}</select></div><div className="forecast-status" role="status"><b>{forecast.status}</b>{forecast.count > 0 && <span>{forecast.count} forward candles</span>}{forecast.generatedAt && <time dateTime={forecast.generatedAt}>Updated {new Date(forecast.generatedAt).toLocaleTimeString()}</time>}{forecastDiagnosticsVisible && <span>TimesFM 3.0 · native quantiles</span>}{forecastDiagnosticsVisible && <button type="button" className="diagnostics-toggle" onClick={() => onForecastUncertaintyVisible?.(!forecastUncertaintyVisible)}>{forecastUncertaintyVisible ? 'Hide range' : 'Show range'}</button>}</div>{forecastDiagnosticsVisible && forecast.uncertainty && <div className="forecast-diagnostics"><span>TimesFM 3 forecast — not trading advice.</span><span>Native P10–P90 quantile range — not a success probability.</span></div>}{error && <p className="error">{error}</p>}<div ref={host} className="openalgo-host" /></div>;
 }

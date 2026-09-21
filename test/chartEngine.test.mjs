@@ -23,3 +23,18 @@ test('application uses only Layer Zero chart-engine imports', () => {
     assert.equal(readFileSync(file, 'utf8').includes("from 'openalgo-charts"), false, file);
   }
 });
+
+test('timeframe transitions notify the host before reloading data', () => {
+  const widget = readFileSync(join(engine, 'widget', 'widget.ts'), 'utf8');
+  const intervalEvent = widget.indexOf("this._bus.emit('interval'");
+  const reloadAfterInterval = widget.indexOf('if (this._opts.feed) void this.reload();', intervalEvent);
+  assert.ok(intervalEvent >= 0);
+  assert.ok(reloadAfterInterval > intervalEvent);
+});
+
+test('forecast controller snapshots interval before asynchronous calendar work', () => {
+  const terminal = readFileSync(join(root, 'src', 'components', 'OpenAlgoTerminal', 'ChartTerminal.jsx'), 'utf8');
+  assert.match(terminal, /const transitionId = transition\.current; const symbol = createdWidget\.symbol\(\); const exchange = createdWidget\.exchange\(\); const interval = createdWidget\.interval\(\)/);
+  assert.match(terminal, /loadForecastCalendar\(callbacks\.current\.client, history\.at\(-1\)\.time, exchange, \{ signal: controller\.signal \}\)/);
+  assert.doesNotMatch(terminal, /loadForecastCalendar\([^\n]+createdWidget\.exchange\(\)\)/);
+});
