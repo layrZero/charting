@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from calibration import CALIBRATION_VERSION, DIRECTIONAL_CALIBRATION_VERSION, CalibrationManager, context_key, stable_context_key
+from calibration import CALIBRATION_VERSION, DIRECTIONAL_CALIBRATION_VERSION, MIN_CALIBRATION_HISTORY, ORIGINS, CalibrationManager, context_key, stable_context_key
 from calibration_store import CalibrationStore
 from directional_probability import evaluate_directional_probability
 from forecast_contract import normalize_predictions, validate_bars, validate_request
@@ -122,8 +122,8 @@ def forecast(request: ForecastRequest):
 def start_calibration(request: CalibrationRequest):
     try:
         bars = validate_bars(request.bars, max_count=2048)
-        if len(bars) < 106:
-            raise ValueError('at least 106 completed candles are required for calibration')
+        if len(bars) < MIN_CALIBRATION_HISTORY:
+            raise ValueError(f'at least {MIN_CALIBRATION_HISTORY} completed candles are required for {ORIGINS} walk-forward origins; received {len(bars)}')
         started = calibration_manager().start(symbol=request.symbol, exchange=request.exchange, interval=request.interval, bars=bars, timestamps=request.future_timestamps)
         return started
     except ValueError as error:
@@ -139,8 +139,8 @@ def calibration_status(run_id: str | None = None, context: str | None = None):
 def refresh_calibration(request: CalibrationRequest):
     try:
         bars = validate_bars(request.bars, max_count=2048)
-        if len(bars) < 106:
-            raise ValueError('at least 106 completed candles are required for calibration')
+        if len(bars) < MIN_CALIBRATION_HISTORY:
+            raise ValueError(f'at least {MIN_CALIBRATION_HISTORY} completed candles are required for {ORIGINS} walk-forward origins; received {len(bars)}')
         scope = stable_context_key(request.symbol, request.exchange, request.interval)
         _store.invalidate_scope(scope, symbol=request.symbol, exchange=request.exchange, interval=request.interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION)
         return calibration_manager().start(symbol=request.symbol, exchange=request.exchange, interval=request.interval, bars=bars, timestamps=request.future_timestamps)

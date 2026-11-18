@@ -20,6 +20,7 @@ test('formats schema validation arrays as readable field errors', () => {
 
 test('chart header keeps directional calibration progress and results visible', () => {
   const terminal = readFileSync(fileURLToPath(new URL('../src/components/OpenAlgoTerminal/ChartTerminal.jsx', import.meta.url)), 'utf8');
+  assert.match(terminal, /CALIBRATION_HISTORY_BARS = 650/);
   assert.match(terminal, /Direction probability is calibrating; native quantiles remain visible\./);
   assert.match(terminal, /Calibrated probability:/);
   assert.match(terminal, /\[1, 3, 5, 10\]/);

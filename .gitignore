@@ -15,7 +15,7 @@ dist-ssr
 # Local-only TimesFM runtime and Python artifacts.
 services/timesfm/.deps/
 services/timesfm/.venv/
-services/timesfm/data/*.sqlite3
+services/timesfm/data/*.sqlite3*
 __pycache__/
 *.py[cod]
 

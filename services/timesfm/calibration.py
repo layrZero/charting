@@ -12,12 +12,31 @@ from calibration_store import CalibrationStore
 from directional_probability import actual_direction, build_directional_calibration, upward_score
 from runtime import MAX_CONTEXT, MODEL_ID, MODEL_REVISION, TimesFMRuntime, forecast_fingerprint
 
-CALIBRATION_VERSION = int(os.environ.get('TIMESFM_CALIBRATION_VERSION', '1'))
-DIRECTIONAL_CALIBRATION_VERSION = int(os.environ.get('TIMESFM_DIRECTIONAL_CALIBRATION_VERSION', '1'))
-ORIGINS = int(os.environ.get('TIMESFM_CALIBRATION_ORIGINS', '32'))
+CALIBRATION_VERSION = int(os.environ.get('TIMESFM_CALIBRATION_VERSION', '2'))
+DIRECTIONAL_CALIBRATION_VERSION = int(os.environ.get('TIMESFM_DIRECTIONAL_CALIBRATION_VERSION', '2'))
+ORIGINS = max(1, int(os.environ.get('TIMESFM_CALIBRATION_ORIGINS', '128')))
 BATCH_SIZE = max(1, int(os.environ.get('TIMESFM_CALIBRATION_BATCH_SIZE', '4')))
 MAX_SECONDS = max(1, int(os.environ.get('TIMESFM_CALIBRATION_MAX_SECONDS', '600')))
 HORIZONS = (1, 2, 3, 5, 10)
+MIN_CALIBRATION_HISTORY = MAX_CONTEXT + ORIGINS + max(HORIZONS)
+
+
+def insufficient_history_message(available):
+    return f'at least {MIN_CALIBRATION_HISTORY} completed candles are required for {ORIGINS} walk-forward origins; received {int(available)}'
+
+
+def walk_forward_origins(bar_count, origins=ORIGINS, max_context=MAX_CONTEXT, horizons=HORIZONS):
+    """Return deterministic origin indexes with complete context and outcome windows."""
+    minimum = max_context + origins + max(horizons)
+    if bar_count < minimum:
+        raise ValueError(f'at least {minimum} completed candles are required for {origins} walk-forward origins; received {int(bar_count)}')
+    context_length = min(max_context, bar_count - origins - max(horizons))
+    max_origin = bar_count - max(horizons)
+    selected = [max(context_length, max_origin - index * max(1, (max_origin - context_length) // origins)) for index in range(origins)]
+    selected = sorted(set(selected))[-origins:]
+    if len(selected) < origins:
+        raise ValueError(f'unable to construct {origins} distinct walk-forward origins from {int(bar_count)} candles')
+    return selected, context_length
 
 
 def context_key(symbol, exchange, interval, bars, model_id=MODEL_ID, model_revision=MODEL_REVISION):
@@ -43,6 +62,8 @@ class CalibrationManager:
         self._run_ids = {}
 
     def start(self, *, symbol, exchange, interval, bars, timestamps):
+        if len(bars) < MIN_CALIBRATION_HISTORY:
+            raise ValueError(insufficient_history_message(len(bars)))
         key = context_key(symbol, exchange, interval, bars)
         scope = stable_context_key(symbol, exchange, interval)
         ready = self.store.get_reusable(stable_context_key=scope, symbol=symbol, exchange=exchange, interval=interval, model_id=MODEL_ID, model_revision=MODEL_REVISION, version=CALIBRATION_VERSION, directional_version=DIRECTIONAL_CALIBRATION_VERSION, ttl_seconds=24 * 3600, minimum_new_bars=16, current_bar_count=len(bars))
@@ -51,7 +72,7 @@ class CalibrationManager:
         with self._lock:
             existing = self._jobs.get(scope)
             if existing and not existing.done():
-                return {'status': 'running', 'context_key': key, 'stable_context_key': scope, 'run_id': self._run_ids.get(scope, scope[:16]), 'total_origins': ORIGINS}
+                return {'status': 'running', 'context_key': key, 'stable_context_key': scope, 'run_id': self._run_ids.get(scope, scope[:16]), 'completed_origins': 0, 'total_origins': ORIGINS}
             run_id = key[:16]
             for old_key, event in list(self._cancel_events.items()):
                 if old_key != scope:
@@ -61,19 +82,14 @@ class CalibrationManager:
             self._cancel_events[scope] = cancel_event
             self._run_ids[scope] = run_id
             self._jobs[scope] = self.executor.submit(self._run, scope, run_id, symbol, exchange, interval, list(bars), list(timestamps), cancel_event)
-            return {'status': 'running', 'context_key': key, 'stable_context_key': scope, 'run_id': run_id, 'total_origins': ORIGINS, 'history_bars': len(bars), 'batch_size': BATCH_SIZE, 'device': self.runtime.device_info.get('device_selected')}
+            return {'status': 'running', 'context_key': key, 'stable_context_key': scope, 'run_id': run_id, 'completed_origins': 0, 'total_origins': ORIGINS, 'history_bars': len(bars), 'batch_size': BATCH_SIZE, 'device': self.runtime.device_info.get('device_selected')}
 
     def _run(self, key, run_id, symbol, exchange, interval, bars, timestamps, cancel_event):
         started = time.monotonic()
-        context_length = min(MAX_CONTEXT, len(bars) - ORIGINS - max(HORIZONS))
-        if context_length < 64:
-            self.store.fail(run_id, 'insufficient history for 32 walk-forward origins')
-            return
-        max_origin = len(bars) - max(HORIZONS)
-        origins = [max(context_length, max_origin - index * max(1, (max_origin - context_length) // ORIGINS)) for index in range(ORIGINS)]
-        origins = sorted(set(origins))[-ORIGINS:]
-        if len(origins) < ORIGINS:
-            self.store.fail(run_id, 'insufficient history for 32 walk-forward origins')
+        try:
+            origins, context_length = walk_forward_origins(len(bars))
+        except ValueError as error:
+            self.store.fail(run_id, str(error))
             return
         errors = {horizon: {name: [] for name in ('P10', 'P25', 'P50', 'P75', 'P90')} for horizon in HORIZONS}
         origin_rows = []
@@ -108,6 +124,7 @@ class CalibrationManager:
                     origin_rows.append((int(item['timestamp']), horizon, quantiles, actual, origin_close, raw_upward_score, actual_move))
                     if horizon in directional_samples:
                         directional_samples[horizon].append({'raw_upward_score': raw_upward_score, 'actual_direction': actual_move})
+            self.store.update_progress(run_id, min(start + BATCH_SIZE, len(origins)))
         offsets = {str(horizon): {name: sum(values) / len(values) for name, values in members.items()} for horizon, members in errors.items()}
         coverage = {horizon: {'P10': len(errors[horizon]['P10'])} for horizon in HORIZONS}
         directional = {str(horizon): build_directional_calibration(samples) for horizon, samples in directional_samples.items()}

@@ -33,6 +33,7 @@ class CalibrationStore:
                     directional_calibration_version INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL,
                     origins INTEGER NOT NULL,
+                    completed_origins INTEGER NOT NULL DEFAULT 0,
                     history_bars INTEGER NOT NULL DEFAULT 0,
                     started_at TEXT NOT NULL,
                     completed_at TEXT,
@@ -70,6 +71,8 @@ class CalibrationStore:
             columns = {row[1] for row in connection.execute('PRAGMA table_info(calibration_runs)')}
             if 'history_bars' not in columns:
                 connection.execute('ALTER TABLE calibration_runs ADD COLUMN history_bars INTEGER NOT NULL DEFAULT 0')
+            if 'completed_origins' not in columns:
+                connection.execute('ALTER TABLE calibration_runs ADD COLUMN completed_origins INTEGER NOT NULL DEFAULT 0')
             if 'stable_context_key' not in columns:
                 connection.execute('ALTER TABLE calibration_runs ADD COLUMN stable_context_key TEXT')
             if 'directional_calibration_version' not in columns:
@@ -142,8 +145,13 @@ class CalibrationStore:
     def begin(self, *, run_id, context_key, stable_context_key=None, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, origins, history_bars, directional_version=0):
         with self._lock, closing(self._connect()) as connection:
             connection.execute('''INSERT OR REPLACE INTO calibration_runs
-                (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, directional_calibration_version, status, origins, history_bars, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)''', (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, directional_version, origins, history_bars, self._now()))
+                (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, calibration_version, directional_calibration_version, status, origins, completed_origins, history_bars, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, 0, ?, ?)''', (run_id, context_key, stable_context_key, symbol, exchange, interval, history_fingerprint, model_id, model_revision, version, directional_version, origins, history_bars, self._now()))
+            connection.commit()
+
+    def update_progress(self, run_id, completed_origins):
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute('UPDATE calibration_runs SET completed_origins=? WHERE run_id=?', (int(completed_origins), run_id))
             connection.commit()
 
     def complete(self, run_id, offsets_by_horizon, coverage_by_horizon, origin_rows, directional_by_horizon=None):
@@ -160,7 +168,7 @@ class CalibrationStore:
                 connection.execute('INSERT OR REPLACE INTO calibration_results VALUES (?, ?, ?, ?, ?)', (run_id, horizon, json.dumps(offsets), sum(coverage.values()) if coverage else 0, json.dumps(coverage)))
             for horizon, result in (directional_by_horizon or {}).items():
                 connection.execute('INSERT OR REPLACE INTO calibration_directional_results VALUES (?, ?, ?)', (run_id, horizon, json.dumps(result)))
-            connection.execute('UPDATE calibration_runs SET status=?, completed_at=?, error=NULL WHERE run_id=?', ('ready', self._now(), run_id))
+            connection.execute('UPDATE calibration_runs SET status=?, completed_origins=origins, completed_at=?, error=NULL WHERE run_id=?', ('ready', self._now(), run_id))
             connection.commit()
 
     def fail(self, run_id, message):
@@ -168,19 +176,23 @@ class CalibrationStore:
             connection.execute('UPDATE calibration_runs SET status=?, completed_at=?, error=? WHERE run_id=?', ('failed', self._now(), str(message)[:500], run_id))
             connection.commit()
 
+    def _status_payload(self, connection, row):
+        completed = connection.execute('SELECT completed_origins FROM calibration_runs WHERE run_id=?', (row[0],)).fetchone()
+        return {'run_id': row[0], 'status': row[1], 'stable_context_key': self._legacy_scope(row), 'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'history_bars': row[9], 'total_origins': row[10], 'completed_origins': int(completed[0]) if completed else 0, 'started_at': row[11], 'completed_at': row[12], 'error': row[13]}
+
     def status(self, context_key):
         with self._lock, self._connect() as connection:
             row = connection.execute('SELECT run_id, status, stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, history_bars, origins, started_at, completed_at, error FROM calibration_runs WHERE context_key=? OR stable_context_key=? ORDER BY started_at DESC LIMIT 1', (context_key, context_key)).fetchone()
             if not row:
                 return None
-            return {'run_id': row[0], 'status': row[1], 'stable_context_key': self._legacy_scope(row), 'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'history_bars': row[9], 'total_origins': row[10], 'started_at': row[11], 'completed_at': row[12], 'error': row[13]}
+            return self._status_payload(connection, row)
 
     def status_by_run_id(self, run_id):
         with self._lock, closing(self._connect()) as connection:
             row = connection.execute('SELECT run_id, status, stable_context_key, symbol, exchange, interval, model_id, model_revision, calibration_version, history_bars, origins, started_at, completed_at, error FROM calibration_runs WHERE run_id=?', (run_id,)).fetchone()
             if not row:
                 return None
-            return {'run_id': row[0], 'status': row[1], 'stable_context_key': self._legacy_scope(row), 'symbol': row[3], 'exchange': row[4], 'interval': row[5], 'history_bars': row[9], 'total_origins': row[10], 'started_at': row[11], 'completed_at': row[12], 'error': row[13]}
+            return self._status_payload(connection, row)
 
     def invalidate(self, context_key):
         with self._lock, closing(self._connect()) as connection:

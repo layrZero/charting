@@ -5,11 +5,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from calibration import context_key, stable_context_key
+from calibration import MIN_CALIBRATION_HISTORY, ORIGINS, context_key, stable_context_key, walk_forward_origins
 from calibration_store import CalibrationStore
 
 
 class CalibrationStoreTests(unittest.TestCase):
+    def test_default_uses_128_origins_and_requires_full_context(self):
+        self.assertEqual(ORIGINS, 128)
+        self.assertEqual(MIN_CALIBRATION_HISTORY, 650)
+        origins, context_length = walk_forward_origins(MIN_CALIBRATION_HISTORY)
+        self.assertEqual(len(origins), 128)
+        self.assertEqual(context_length, 512)
+        self.assertEqual(len(set(origins)), 128)
+
+    def test_insufficient_history_reports_required_count(self):
+        with self.assertRaisesRegex(ValueError, 'at least 650 completed candles.*received 649'):
+            walk_forward_origins(649)
+
+    def test_origins_have_no_lookahead(self):
+        origins, context_length = walk_forward_origins(700)
+        for origin in origins:
+            self.assertLessEqual(origin - context_length, origin - 1)
+            self.assertLessEqual(origin, 700 - 10)
+
     def test_context_isolated_by_symbol_and_interval(self):
         bars = [{'time': index, 'open': 1, 'high': 2, 'low': 0, 'close': 1.5, 'volume': 1} for index in range(10)]
         self.assertNotEqual(context_key('A', 'NSE', '1m', bars), context_key('B', 'NSE', '1m', bars))
@@ -48,9 +66,11 @@ class CalibrationStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = CalibrationStore(Path(directory) / 'calibration.sqlite3')
             store.begin(run_id='run', context_key='exact', stable_context_key='stable', symbol='A', exchange='NSE', interval='1m', history_fingerprint='exact', model_id='model', model_revision='rev', version=1, origins=32, history_bars=106)
+            store.update_progress('run', 16)
             status = store.status_by_run_id('run')
             self.assertEqual(status['stable_context_key'], 'stable')
             self.assertEqual(status['history_bars'], 106)
+            self.assertEqual(status['completed_origins'], 16)
             self.assertEqual(status['status'], 'running')
 
 
